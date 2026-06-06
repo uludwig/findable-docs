@@ -1,0 +1,44 @@
+---
+title: "Memory System (Mem0)"
+description: "Persistent conversation memory via Mem0 with per-chat scopes and retrieval strategies."
+---
+
+Findable integrates with **Mem0** for persistent conversation memory, allowing AI to remember context across sessions.
+
+### Memory Scopes
+
+| Scope | Description | Visibility |
+|-------|-------------|------------|
+| **USER_GLOBAL** | User's private memories across all chats | User only |
+| **USER_CHAT** | User's private memories for a specific chat | User only, per-chat |
+| **ORG_CHAT** | Shared memories for a specific chat | All chat participants |
+| **ORG_GLOBAL** | Organization-wide memories (admin-managed) | All users |
+
+### Provider Options
+
+| Provider | Description |
+|----------|-------------|
+| **[Mem0 Cloud](https://app.mem0.ai/)** | Managed SaaS — configure `mem0ApiKey` and `mem0BaseUrl` |
+| **[Mem0 OSS](https://github.com/mem0ai/mem0)** | Self-hosted — configure embedding model, vector store ([Qdrant](https://qdrant.tech/), [Chroma](https://www.trychroma.com/), [Weaviate](https://weaviate.io/), or in-memory) |
+
+### Per-Chat Memory Configuration
+
+Each chat can independently configure:
+- **Enable/disable** memory (`memoryEnabled`)
+- **Read scopes** — Which memory scopes to query (`memoryReadScopes`)
+- **Write scope** — Where new memories are stored (`memoryWriteScope`)
+- **Token budget** — Max tokens/percentage for memory context injection
+- **Retrieval strategy** — `semantic`, `recency`, `hybrid`, `semantic_keyword`, or `all`
+- **Source locks** — Prevent users from disabling specific memory sources per-chat
+
+### Admin Configuration
+
+Configure in **Admin → Memory** ([`#/admin/memory`], setting key `memorySettings`):
+- Global enable/disable
+- Provider selection and credentials
+- Default retention, search limits, and similarity thresholds
+- Organization vs personal memory toggles
+- Memory extraction instructions for quality tuning
+- Cleanup scheduler for expired memories
+
+See [Mem0 Integration Guide](/docs/MEM0_INTEGRATION.md) for detailed setup.

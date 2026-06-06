@@ -1,0 +1,124 @@
+---
+title: "Setup Wizard (First-Time Configuration)"
+description: "Guided 5-step wizard that runs on first launch and writes the initial settings document to Cosmos DB."
+---
+
+Findable includes a guided setup wizard that runs on first launch when the Cosmos DB `settings` container is empty or missing. Setup mode is detected automatically — no special flag is needed.
+
+### Prerequisites
+
+The only environment-level configuration Findable needs is a connection to **Azure Cosmos DB**. Set these variables in your `.env` file (local dev) or as **Azure App Service Application Settings** (production). Everything else — Azure AD, Graph API, admin groups, AI endpoints, features — is configured through the wizard and stored in Cosmos DB.
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `AZURE_COSMOS_ENDPOINT` | ✅ | Cosmos DB account endpoint URL (e.g. `https://your-account.documents.azure.com:443`) |
+| `AZURE_COSMOS_DB` | ✅ | Target database name — must already exist; the wizard creates containers, not the database |
+| `AZURE_COSMOS_AUTH_TYPE` | ✅ | `apiKey` or `managedSystemIdentity` |
+| `AZURE_COSMOS_KEY` | When using `apiKey` | Cosmos DB primary or secondary key (omit for managed identity) |
+| `AZURE_COSMOS_CONNECTIONSTRING` | Alternative | Can be used instead of endpoint + key |
+| `LOG_LEVEL` | Optional | Logging level: `debug`, `info`, `warn`, `error` (default: `info`) |
+
+> **Note:** The Cosmos DB **database** must be created manually before running the wizard. If the database is missing, the client shows an error screen instead of the wizard.
+
+### How Setup Mode Is Detected
+
+#### Server-Side Detection
+
+On startup, the server checks two conditions:
+
+1. **Does the Cosmos DB database exist?** (`doesDatabaseExist()`)
+2. **Is the settings container ready?** (`isSettingsReady()` — container exists and has at least one document)
+
+If either check fails, the server enters **setup-only mode**:
+- Only `/server/setup/*` endpoints and a dynamic `/server/bootstrap` endpoint are mounted
+- Authentication middleware is **not** loaded (setup must work before Azure AD is configured)
+- A **setup monitor** polls every 5 seconds for setup completion
+
+Once setup writes the initial settings document, the monitor detects the change and automatically re-initializes the server with all routes, middleware, and schedulers — **no restart required**.
+
+#### Client-Side Detection
+
+The client calls `GET /server/bootstrap` on load and reacts based on the response:
+
+| Server Response | Client Behavior |
+|----------------|-----------------|
+| `initialized: true` | Normal app — MSAL login, full UI |
+| `initialized: false`, reason `cosmos_database_missing` | Error screen — database must be created manually |
+| `initialized: false`, reason `cosmos_container_missing` | "Setup Required" screen with a **Start Setup** button |
+| `initialized: true` + user on `#/start` | **Setup Access Denied** — blocks re-running setup on a configured app |
+
+When the client renders the setup wizard, it **bypasses MSAL authentication** entirely — the wizard operates without Azure AD since those credentials haven't been configured yet.
+
+### Setup Modes
+
+The setup entry point (`#/start`) offers two modes via a toggle:
+
+| Mode | Description |
+|------|-------------|
+| **Wizard** (default) | Guided 5-step stepper with validation at each step |
+| **Classic** | Manual configuration form for advanced users |
+
+### Wizard Steps
+
+| Step | Name | What It Does | Server Endpoint |
+|------|------|-------------|-----------------|
+| 1 | **Prerequisites** | Checks Cosmos DB connectivity, verifies the database exists, and creates required containers if missing | `GET /server/setup/preflight`, `POST /server/setup/containers/init` |
+| 2 | **Azure AD** | Configures the client app registration — `tenantId` and `clientId` for MSAL authentication | *(client-side only — stored in wizard state)* |
+| 3 | **Graph API** | Configures the server app registration — `graphClientId` and `graphClientSecret` (or managed identity). Validates connectivity to Microsoft Graph | `POST /server/setup/graph/validate` |
+| 4 | **Admin Groups** | Assigns initial admin owners (Azure AD users/groups) who will have full administrative access. Uses a temporary MSAL instance for group search | *(client-side — uses temporary MSAL wrapper)* |
+| 5 | **Review & Complete** | Reviews all settings and writes the initial configuration to the Cosmos DB `settings` container | `PUT /server/setup/settings`, `POST /server/setup/complete` |
+
+**Step details:**
+
+- **Step 1 (Prerequisites)** creates the required Cosmos DB containers. Most use `/id` as the partition key (`settings`, `chat`, `prompts`, `flows`, `pages`, `aitoolproviders`, `mcpservers`, `modelendpoints`, `vectorstores`); user-scoped containers (`chatlog`, `feedback`, `usersettings`, `userfavorites`, `usernotifications`, `usernotificationpreferences`) use `/email`; and `humaninput` uses `/executionId`.
+- **Step 4 (Admin Groups)** wraps the group selector in a temporary `SetupMSALWrapper` that creates a minimal MSAL `PublicClientApplication` using the `clientId` and `tenantId` entered in Step 2. This enables Azure AD group search via popup login before the main app's MSAL instance exists.
+- **Step 5 (Review & Complete)** validates and sanitizes the settings payload (requires `tenantId` and `clientId`, validates `graphAuthType`, and only allows known fields) before upserting to Cosmos DB.
+
+### Auto-Transition After Setup
+
+After the wizard completes:
+
+1. The client calls `POST /server/setup/complete`
+2. The server's setup monitor (polling every 5s) detects that `isSettingsReady()` now returns `true`
+3. The server calls `initializeApp()` which:
+   - Initializes the `SettingsService` (loads settings from Cosmos DB, creates default endpoints)
+   - Starts the settings auto-refresh timer (every 5 minutes)
+   - Mounts authentication middleware and all application routes
+   - Starts background schedulers (purge, memory cleanup, ephemeral cleanup, etc.)
+   - Initializes notification providers (Teams, Slack, email)
+4. The client's review step shows a countdown, then redirects to the main app at `/`
+
+### Wizard State Persistence
+
+The wizard persists its state to `localStorage` (key: `findable-setup-wizard-state`) so progress survives page refreshes. Secrets (`graphClientSecret`) are excluded from persistence. Saved state older than **24 hours** is automatically discarded to prevent stale data from abandoned setup attempts.
+
+### Setup API Endpoints
+
+All setup endpoints are unauthenticated (mounted before auth middleware) and only available when the app is not fully initialized.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/server/setup/ping` | Health check |
+| `GET` | `/server/setup/preflight` | Run preflight checks (Cosmos connectivity + containers) |
+| `GET` | `/server/setup/cosmos/validate` | Validate Cosmos DB connection details |
+| `POST` | `/server/setup/containers/init` | Create all required Cosmos DB containers |
+| `GET` | `/server/setup/containers/status` | Report which containers exist vs missing |
+| `POST` | `/server/setup/graph/validate` | Test Graph API credentials (client credentials or managed identity) |
+| `PUT` | `/server/setup/settings` | Write initial settings document to Cosmos DB |
+| `POST` | `/server/setup/complete` | Signal that setup is done (server auto-transitions) |
+
+### Post-Setup: Bootstrap Assets
+
+After initial setup, an administrator should seed the application with default content:
+
+1. Navigate to **Admin → Bootstrap Assets** ([`#/admin/bootstrap`])
+2. Click **Bootstrap All** to create:
+   - **Tool providers** — Built-in tools (Internal Cosmos DB Query, etc.)
+   - **MCP servers** — Default MCP server configurations
+   - **Model endpoints** — Templates for major LLM providers (Azure OpenAI, OpenAI, Anthropic, Gemini, etc.)
+   - **Organizational prompts** — Starter prompt templates
+   - **Organizational flows** — Built-in flows (Chat with My Data, Chat with My History)
+   - **Pages & chats** — Default navigation structure with sample chats
+   - **Essential chats** — Standalone chats for smaller deployments
+
+> Bootstrap operations are **idempotent** — running them again will skip existing resources and only create missing ones. Use the `forceUpdate` option to update existing items while preserving keys and enabled states.

@@ -1,0 +1,80 @@
+---
+title: "OneDrive Personal Files Setup"
+description: "Use OneDrive as the storage backend for personal and workspace files in place of Azure Blob Storage."
+---
+
+OneDrive can be used as the **storage backend for personal and workspace files** in place of Azure Blob Storage. When enabled, every user's uploaded files (workspace uploads and personal files attached inside shared chats) are written into a dedicated folder in **their own OneDrive for Business**, then indexed into a single shared Azure AI Search index that is security-trimmed per user via an `UserIds` ACL filter.
+
+> ℹ️ This is a different feature from the **OneDrive Tools** that flow agents use to list/search/upload files on behalf of a user. Those tools use **delegated (OBO) permissions** and are documented under [Tool Setup Guide → OneDrive Tools](/tools-mcp/tool-setup). The setup below is for the **personal-files storage backend** only.
+
+### What it changes
+
+| Aspect | Default (Azure Files) | OneDrive backend |
+|--------|----------------------|------------------|
+| Where workspace files live | Azure Blob `Private/` per user | User's OneDrive at `{oneDriveFolderName}/Workspace/` |
+| Where personal-files-in-shared-chat live | Azure Blob `Private/` per user | User's OneDrive at `{oneDriveFolderName}/AttachedFiles/{chatId}/` |
+| Search index | One per user (auto-provisioned) | One shared index (`oneDriveSharedIndexName`, default `personal-onedrive-shared`) with `UserIds` ACL filter |
+| Document text extraction | Azure Search skillsets | Server-side via Azure Document Intelligence + chunking + embeddings |
+| Indexing trigger | Indexer schedule | On-demand on every upload (immediate) |
+| Retention / cleanup | `personalFolderRetentionInHours` purge job (Blob) | OneDrive purge job removes inactive users' folders **and** their docs from the shared index |
+| External / guest users | Supported | **Not supported** — external users automatically fall back to Azure Blob (their tenant's OneDrive is unreachable) |
+
+### Prerequisites
+
+1. The Server App Registration (`graphClientId`) must be configured with a **client secret** (`graphClientSecret`). Managed Identity is **not** supported for OneDrive — it requires client-credentials flow to call `users/{userId}/drive/...` endpoints.
+2. An Azure AI Search endpoint configured in **Admin → AI Search Endpoints** ([`#/admin/search`], setting key `aiSearchEndpoints`).
+3. A text embedding endpoint (or `textEmbeddingModelEndpointId` on the search endpoint) — required to generate vectors during indexing.
+4. An Azure Document Intelligence resource (or compatible `documentIntelligenceEndpoint` on the search endpoint) — required to extract text from PDF/Office/image files. Plain-text and code files bypass Document Intelligence.
+
+### Step 1 — Grant Graph application permission
+
+In the [Azure Portal → App Registrations](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade), open the **Server App** (`graphClientId`):
+
+| Permission | Type | Why |
+|-----------|------|-----|
+| `Files.ReadWrite.All` | **Application** | Lets the server list, upload, index, and purge files in any user's OneDrive app folder |
+
+Add the permission and click **"Grant admin consent for [tenant]"**. This must be the **server** app, not the client SPA app.
+
+> The app folder scoping (`{oneDriveFolderName}`) is enforced at the application layer — `Files.ReadWrite.All` itself grants tenant-wide access. Treat the server app secret accordingly.
+
+### Step 2 — Configure Findable
+
+In **Admin → Personal Workspace** ([`#/admin/workspace`], setting key `adminNav.personalWorkspace`) → **Personal File Location**, switch the backend:
+
+| Setting | Required value | Notes |
+|---------|----------------|-------|
+| `personalFileLocation` | `OneDrive` | Default is `AzureFiles` |
+| `oneDriveFolderName` | e.g. `AIAssistant` | Default `AIAssistant`. This is the root folder created in each user's OneDrive. |
+| `oneDriveSharedIndexName` | e.g. `personal-onedrive-shared` | Default `personal-onedrive-shared`. The shared, ACL-filtered Azure AI Search index. |
+
+The shared index is created lazily on the first upload — no manual provisioning step is required.
+
+### Step 3 — (Optional) Enable client-side direct uploads
+
+For drag-and-drop uploads that go straight from the browser to OneDrive (bypassing the server), also add `Files.ReadWrite` (**Delegated**) to the **Client App Registration** and grant admin consent. Without this, uploads still work — they just go through the server instead.
+
+### Step 4 — Verify
+
+1. Sign in as a tenant user, open the workspace, and upload a small file.
+2. In the user's OneDrive, confirm the folder layout:
+   ```
+   {oneDriveFolderName}/
+   ├── Workspace/                  ← workspace uploads
+   └── AttachedFiles/{chatId}/     ← personal files attached inside shared chats
+   ```
+3. In **Admin → Health** ([`#/admin/about`]), confirm the Graph `Files.ReadWrite.All` scope is healthy.
+4. Run a workspace query — the document should be retrievable. Repeat as a different user and confirm the second user **cannot** see the first user's content (ACL trim via `UserIds`).
+
+### How indexing & ACL work
+
+- On every upload, the server downloads the file, extracts text (Document Intelligence for PDF/Office/images, direct UTF-8 for text/code), chunks it (4 KB chunks, 200-char overlap), generates embeddings, and upserts into the **shared** index.
+- Each indexed chunk carries `UserIds: [userOid]`. Every query is forced to include `UserIds/any(u: u eq '{currentUserOid}')` plus a path-prefix filter (`onedrive://{userOid}/Workspace/...` for workspace queries, `AttachedFiles/{chatId}/` for chat-attached files).
+- If the server cannot resolve a caller's OID, the query is **rejected** rather than falling back to an unscoped search.
+- A background purge job removes documents from the shared index (and the OneDrive folder) for users inactive longer than `personalFolderRetentionInHours`.
+
+### Limitations
+
+- **External / guest users (`#EXT#` in UPN)** are excluded — they automatically use the Azure Blob fallback even when `personalFileLocation = OneDrive`.
+- Managed-identity Graph auth is not supported for OneDrive — `graphClientSecret` is required.
+- Files indexed before switching backends are not migrated. Switching `personalFileLocation` only affects new uploads.

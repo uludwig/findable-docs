@@ -1,0 +1,13 @@
+---
+title: "CI/CD"
+description: "GitHub Actions workflows for dev and alpha deployment to Azure App Service slots."
+---
+
+GitHub Actions workflows are provided in `.github/workflows/`:
+
+| Workflow | Trigger | Description |
+|----------|---------|-------------|
+| `develop_findable(dev).yml` | Push to `develop` | Builds and deploys to the **dev** Azure App Service slot |
+| `3.1.0_findable(alpha).yml` | Push to `3.1.0` | Builds and deploys to the **alpha** Azure App Service slot |
+
+Both workflows run `npm install`, `npm run build` (which builds shared, server, and client), and deploy the resulting artifact to Azure App Service. No `.env` file is involved — all runtime configuration comes from Azure App Service Application Settings.

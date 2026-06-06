@@ -1,0 +1,82 @@
+---
+title: "Web Search RAG"
+description: "Ground chat responses in real-time web results from Tavily, Perplexity, Brave, Exa, or SerpAPI."
+---
+
+Web Search RAG augments chat responses with real-time web search results. When enabled, the system searches the web before each LLM call and injects the results as additional context alongside document RAG citations.
+
+### Admin Configuration
+
+Configure in **Admin → Sources → Web Search**:
+
+| Setting | Description |
+|---------|-------------|
+| **Enable Web Search** | Global toggle — when off, web search is hidden from all chat edit forms |
+| **Default Search Provider** | System default provider used when a chat doesn't specify one |
+| **Default Max Results** | Default number of web results to inject (1–20) |
+| **Default Include Answer** | Whether to include the provider's AI-generated answer summary |
+| **Allow Provider Override** | When off, chat owners cannot change the search provider — the system default is always used |
+
+### Chat-Level Configuration
+
+Chat owners configure web search per chat in **Chat Settings → Web Search**:
+
+| Setting | `IChatTabDBItem` field | Description |
+|---------|----------------------|-------------|
+| **Enable Web Search** | `webSearchEnabled` | Per-chat toggle |
+| **Search Provider** | `webSearchProvider` | Override the system default (if allowed by admin). Shows "System Default" when empty |
+| **Max Results** | `webSearchConfig.maxResults` | Number of web results to inject per query |
+| **Include Answer** | `webSearchConfig.includeAnswer` | Include AI-generated answer summary from the search provider |
+| **Search Depth** | `webSearchConfig.searchDepth` | Tavily-specific: `basic` or `advanced` |
+| **Allowed Domains** | `webSearchConfig.includeDomains` | Restrict search results to only these domains (e.g. `docs.microsoft.com`) |
+| **Excluded Domains** | `webSearchConfig.excludeDomains` | Never include results from these domains (e.g. `pinterest.com`) |
+| **Pinned Pages** | `webSearchConfig.pinnedUrls` | Specific URLs always fetched and injected as authoritative context |
+
+### End-User Sidebar Toggles
+
+Chat owners can optionally allow end users to control web search features from the sidebar at runtime:
+
+| Setting | `IChatTabDBItem` field | Default | Description |
+|---------|----------------------|---------|-------------|
+| **Allow Web Search Toggle** | `allowUserWebSearchToggle` | `false` | Users can enable/disable web search per session |
+| **Allow Pinned URL Edit** | `allowUserPinnedUrlEdit` | `false` | Users can add/remove pinned URLs |
+| **Allow Include Domain Edit** | `allowUserIncludeDomainEdit` | `false` | Users can add/remove allowed domains |
+| **Allow Exclude Domain Edit** | `allowUserExcludeDomainEdit` | `false` | Users can add/remove excluded domains |
+
+### Search Providers
+
+| Provider | Domain Filtering | Exclude Domains | Native API |
+|----------|-----------------|-----------------|------------|
+| [Tavily](https://tavily.com/) | `include_domains` | `exclude_domains` | Native |
+| [Perplexity](https://www.perplexity.ai/) | `search_domain_filter` | Not supported | Native |
+| [Brave](https://brave.com/search/api/) | `site:` query operator | `-site:` query operator | Query rewrite |
+| [Exa](https://exa.ai/) | `includeDomains` | `excludeDomains` | Native |
+| [SerpAPI](https://serpapi.com/) | `site:` query operator | `-site:` query operator | Query rewrite |
+
+All providers are configured in **Admin → Tools** ([`#/admin/tool`]) with their respective API keys.
+
+### Pinned Pages
+
+Pinned pages are specific URLs that are **always fetched** on every message, regardless of the user's query. They serve as authoritative reference material:
+
+- Each URL is fetched in parallel (10s timeout, 500KB limit per page)
+- HTML is stripped to plaintext and truncated to ~4,000 characters
+- Injected into the system prompt as `[pinnedN]` references with priority instruction
+- Appear in citations alongside regular web search results
+- Useful for grounding a chat to specific documentation, policies, or reference pages
+
+### How It Works
+
+1. **Before each LLM call**, the orchestrator checks if web search is enabled for the chat
+2. **Web search** runs against the configured provider with domain filters applied
+3. **Pinned pages** are fetched in parallel (independent of the search query)
+4. Results are formatted as `[webN]` and `[pinnedN]` context blocks and injected into the message history
+5. The LLM sees both document RAG results and web results, with instructions to cite sources inline
+6. **Citations** from web search and pinned pages are streamed to the client alongside document citations
+
+### Server-Side Default Merging
+
+When a chat has web search enabled but no explicit provider selected:
+1. The server reads `appSettings.defaultWebSearchProvider` and applies it
+2. `defaultWebSearchConfig` (maxResults, includeAnswer) is merged — chat-level overrides take precedence
+3. This happens in `ai.ts` before the orchestrator is invoked

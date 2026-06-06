@@ -1,0 +1,45 @@
+---
+title: "Chat with Your Own Data"
+description: "Built-in flows that let users chat with their own data using Cosmos DB partition-key isolation."
+---
+
+In Findable AI, exposing data through the flow tool carries the risk of inadvertently sharing information from other users' logs if connecting directly to the system database. To address this, we've implemented a secure partition key approach that effectively protects user data. This method leverages a built-in Cosmos DB tool, which connects directly to our system database for consistent functionality—even if administrators alter other data connections or tools. The tool is available immediately upon installation and remains reliably accessible thereafter.
+
+Findable includes two built-in flows that let users chat with their own data out of the box. These flows query the application's internal Cosmos DB using the authenticated user's email as a **partition key**, ensuring each user can only see their own data — no configuration required.
+
+### Built-in Flows
+
+| Flow | Description | Containers Queried |
+|------|-------------|-------------------|
+| **Chat with My Data** | Ask questions across all your personal data. Runs 5 parallel queries and combines results. | `chatlog`, `userfavorites`, `feedback`, `usersettings`, `usernotifications` |
+| **Chat with My History** | Deep-dive into your conversation history with full message content. | `chatlog` |
+
+These flows appear under the **Personal History** flow group and are seeded via **Admin → Bootstrap Assets → Flows** ([`#/admin/bootstrap`]).
+
+### How It Works
+
+The flows use a special `cosmos_internal` tool provider that connects directly to the application's own Cosmos DB — not an external data connection. The execution path:
+
+1. **Flow defines a tool node** with `toolId` pointing to the `cosmos_internal` tool
+2. **Flow orchestrator** routes by `providerId: 'cosmos_internal'` to a dedicated handler
+3. **Handler calls `getContainer()`** from the app's own Cosmos module (same connection used by all server routes)
+4. **Partition key** (`{{user.email}}`) is resolved from the authenticated user's session and passed directly to the Cosmos SDK query options
+5. **Results** are fed into a prompt template and presented by the LLM
+
+### Security
+
+- **Partition key isolation** — The Cosmos SDK physically restricts queries to the user's partition. Even a `SELECT * FROM c` only returns their data.
+- **Server-enforced email** — The partition key is resolved server-side from `req.user.upn.toLowerCase()`, not from client input.
+- **Container allowlist** — Only 6 email-partitioned containers are permitted: `chatlog`, `feedback`, `usersettings`, `userfavorites`, `usernotifications`, `usernotificationpreferences`.
+- **Read-only** — The tool is configured as read-only with a 30-second timeout and 100-row default limit.
+
+### Admin Setup
+
+These flows depend on the **Internal Cosmos DB Query** tool (`cosmos_internal`). An administrator must enable both the tool and the flows before users can chat with their data.
+
+1. **Bootstrap the tool** — Navigate to **Admin → Bootstrap Assets** ([`#/admin/bootstrap`]) and click **Bootstrap Tools** (or **Bootstrap All**). This registers the `Internal Cosmos DB Query` tool in the tools registry.
+2. **Enable the tool** — Go to **Admin → Tools** ([`#/admin/tool`]) and verify the **Internal Cosmos DB Query** tool is toggled **on**. It is enabled by default after bootstrapping, but an admin can disable it at any time to revoke access.
+3. **Bootstrap the flows** — From **Admin → Bootstrap Assets** ([`#/admin/bootstrap`]), click **Bootstrap Flows** (or **Bootstrap All**). The two flows will appear under the **Personal History** group in the Flow Designer.
+4. **Attach a flow to a chat** — On any chat configuration, set `flowEngineEnabled: true` and select the desired flow from the **Flow** dropdown (or set `flowEngineFlowId` directly to the flow's ID).
+
+> **Note:** If the `Internal Cosmos DB Query` tool is disabled or not bootstrapped, the personal data flows will fail at the tool execution step. Re-enable the tool to restore access.

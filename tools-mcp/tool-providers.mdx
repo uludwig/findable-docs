@@ -1,0 +1,48 @@
+---
+title: "Tool Providers & MCP Servers"
+description: "Pluggable tool registry and Model Context Protocol servers that extend agent capabilities."
+---
+
+### Tool Providers
+
+The Tools Registry is a pluggable system for registering tool providers that agents can call during flow execution. Each provider (`IToolProviderConfig`) defines:
+
+- **Provider ID** — Unique identifier (e.g., `tavily`, `sql`, `cosmos_internal`, `exchange`, `onedrive`)
+- **Auth configuration** — API key, bearer token, or managed identity
+- **Variable specs** — Rich input forms for tool parameters (same `IPromptVariable` format as prompts)
+- **Output variables** — Declared outputs for downstream dot-notation references
+- **Custom integrations** — REST API, GraphQL, or JavaScript function code
+
+**Built-in Tool Providers** (seeded via Bootstrap Assets):
+
+| Provider | Description | Auth |
+|----------|-------------|------|
+| **Internal Cosmos DB Query** | Query the app's own Cosmos DB with partition-key isolation | App credentials |
+| **Exchange Online** (6 tools) | Send email, list messages, search, calendar events, out-of-office | OBO (delegated) |
+| **OneDrive** (6 tools) | List/search/get/upload files, create folders, sharing links | OBO (delegated) |
+| **Web Search** (Tavily, SERP, Perplexity) | Internet search for agents | API key |
+| **SQL Tools** | Execute queries against configured database connections | Data Platform API key |
+
+**OBO (On-Behalf-Of) Tools:**
+Exchange and OneDrive tools use delegated Graph API permissions. The user's token is exchanged server-side via MSAL's OBO flow, so tools execute as the authenticated user — they can only access the user's own mailbox, calendar, and OneDrive.
+
+### MCP Servers
+
+MCP (Model Context Protocol) servers extend agent capabilities through a standardized tool interface. Each registered server (`IMCPServerRegistryEntry`) specifies:
+
+| Field | Description |
+|-------|-------------|
+| **Server Type** | `stdio` (local process), `http` (remote endpoint), or `websocket` |
+| **Auth Type** | `none`, `apiKey`, `bearerToken`, or `oauth` |
+| **Command/Args** | For stdio servers: `npx -y @modelcontextprotocol/server-memory` |
+| **Endpoint** | For HTTP/WebSocket servers: the connection URL |
+| **Environment Variables** | Passed to stdio processes |
+
+MCP servers are registered in **Admin → MCP Servers** and can be:
+- **Attached to flows** via MCP Server nodes in the Flow Designer
+- **Attached to chats** via `enabledMCPServers` on the chat configuration
+- **Used by the MCP orchestrator** when `AI_ORCHESTRATOR.MCP` is selected on a model endpoint
+
+**Built-in MCP Servers** (seeded via Bootstrap Assets):
+- **Memory** — Persistent knowledge graph for agent context
+- **Sequential Thinking** — Step-by-step reasoning and problem decomposition

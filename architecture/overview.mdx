@@ -1,0 +1,225 @@
+---
+title: "Architecture Overview"
+description: "Findable's high-level system architecture — React client, Node.js/Express server, Cosmos DB, Azure AI Search, and multi-vendor LLM providers."
+---
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         Client (React/Vite)                      │
+│                      https://localhost:3001                      │
+└─────────────────────────────────────────────────────────────────┘
+                                 │
+                                 ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      Server (Node.js/Express)                    │
+│                      https://localhost:3000                      │
+├─────────────────────────────────────────────────────────────────┤
+│  Routes: /user/* /chats/* /flows/* /prompts/* /admin/* /ai/*    │
+│  Middleware: Auth, ACL, Logging, Error Handling                  │
+└─────────────────────────────────────────────────────────────────┘
+                                 │
+        ┌────────────────────────┼────────────────────────┐
+        ▼                        ▼                        ▼
+┌───────────────┐      ┌─────────────────┐      ┌─────────────────┐
+│  Azure Cosmos │      │  Azure AI Search │      │   LLM Providers │
+│      DB       │      │   + Blob Storage │      │  (Multi-vendor) │
+└───────────────┘      └─────────────────┘      └─────────────────┘
+```
+
+### Monorepo Structure
+
+| Directory | Description |
+|-----------|-------------|
+| `/src` | Node.js/Express backend server |
+| `/client` | Vite/React frontend application |
+| `/shared` | TypeScript types and utilities shared between client and server |
+| `/docs` | Comprehensive documentation |
+
+### API Documentation
+
+Interactive API documentation is available via Swagger UI at `/server/api-docs` (admin-only). The raw OpenAPI spec can be downloaded at `/server/api-docs/spec.json` for import into Postman, Insomnia, or client SDK generators. See the spec for full authentication details including how to obtain an Azure AD Bearer token.
+
+### Chat Types & Entity Scopes
+
+Findable has three distinct types of chats, each with different storage, lifecycle, and access control characteristics.
+
+#### 1. Workspace (Ephemeral)
+
+The **workspace** is a session-based personal scratchpad — the user's true private workspace. It is **not** persisted as a chat in the database; a new chat ID is generated for each browser session and when the user presses the clear icon.
+
+- **Storage:** Redux only (client-side state), never saved to Cosmos DB
+- **Lifecycle:** Lost on browser close, refresh, or clear
+- **Files:** Uploaded to Azure Blob `Private/` folder by default (files persist; chat history does not). When OneDrive is enabled (`personalFileLocation = OneDrive`) and Document Level ACL permissions are enabled (**Admin → Delegated Permissions** [`#/admin/delegated`]), workspace files are stored in the user's OneDrive instead.
+- **ACL:** N/A — creator only, no shared access
+- **Appears in navigation:** As a pinned "My Chat" item (not in the chat list)
+
+**Admin gating — two settings in Admin → Personal Workspace** ([`#/admin/workspace`])**:**
+
+| Setting | Type | Effect |
+|---------|------|--------|
+| **`enablePersonalWorkspace`** | Boolean (master switch) | When **off** (default), workspace is hidden for everyone regardless of the user list. When **on**, workspace is available. |
+| **`allowedWorkspaceUsers`** | User/Group list (optional restriction) | When `enablePersonalWorkspace` is **on** and this list is **empty**, all authenticated users get workspace access. When **non-empty**, only listed users/groups see the workspace. |
+
+The combined logic on the server (`auth.middleware.ts`):
+
+```
+workspaceUser = enablePersonalWorkspace AND (allowedWorkspaceUsers is empty OR user is in list)
+```
+
+The client gates the workspace tab, pinned navigation item, and personal file panels on the `isWorkspaceUser` flag returned by the server.
+
+#### 2. Shared (Persisted)
+
+**Shared chats** are the primary chat type — persisted in Cosmos DB with `EntityScope: Shared`. They are visible to users based on ACL (owners, contributors, users) and appear in navigation pages.
+
+- **Storage:** Cosmos DB (`chats` container)
+- **Lifecycle:** Permanent until deleted
+- **Files:** Azure Blob `Shared/{folderName}/` with per-chat search index
+- **ACL:** Full ACL with owners/contributors/users and inheritance
+- **Appears in navigation:** Yes, under pages
+- **Default:** Shared scope is always enabled (`defaultEntityScopeConfig.allowShared` defaults to `true` and cannot be fully disabled — the system falls back to shared if no scopes are allowed)
+
+Shared chats are created by Admins and Content Managers through the navigation UI. No special admin toggle is needed — shared scope is on by default.
+
+#### 3. Personal (Persisted) — Rarely Used
+
+**Personal chats** are an optional, rarely-used chat type — persisted in Cosmos DB with `EntityScope: Personal`. They are visible **only** to their creator and appear in navigation. Unlike the ephemeral workspace, personal chats survive across sessions.
+
+- **Storage:** Cosmos DB (`chats` container)
+- **Lifecycle:** Permanent until deleted
+- **Files:** Azure Blob `Personal/{sanitized-upn}/`
+- **ACL:** Creator only (no shared ACL — only the creator can see or access)
+- **Appears in navigation:** Yes
+
+**Admin gating:** Controlled by the entity scope system in **Admin → Entity Scopes** ([`#/admin/scopes`]):
+
+- **Global default:** `defaultEntityScopeConfig.allowPersonal` — toggles personal scope for all entity types
+- **Per-type override:** `entityScopeOverrides.chat.allowPersonal` — overrides the global default specifically for chats
+- Server-side enforcement via `validateEntityScope()` blocks personal chat creation when disabled
+- Default: `allowPersonal: true` for chats
+
+> **⚠️ Recommendation:** It is generally not recommended to allow users to create multiple personal chats as they consume an Azure AI Search index. The ephemeral workspace already provides a private chat experience without any indexing overhead. Consider disabling personal chat scope (`allowPersonal: false` for the Chat entity type) unless there is a specific need for persisted personal chats.
+
+#### Comparison
+
+| Feature | Workspace | Shared Chat | Personal Chat |
+|---------|-----------|-------------|---------------|
+| **EntityScope** | N/A (not an entity) | `Shared` | `Personal` |
+| **Storage** | Redux (ephemeral) | Cosmos DB | Cosmos DB |
+| **Survives session** | No | Yes | Yes |
+| **Appears in nav** | Pinned item | Under pages | Under pages |
+| **Visibility** | Creator only | ACL-controlled | Creator only |
+| **Admin gating** | `enablePersonalWorkspace` + `allowedWorkspaceUsers` | Always on (default) | `entityScopeOverrides.chat.allowPersonal` |
+| **Files** | `Private/` (Blob) | `Shared/{folder}/` (Blob) | `Personal/{upn}/` (Blob) |
+
+### Look & Feel
+
+Administrators can customize the application's appearance under **Admin → Appearance**.
+
+#### Branding
+
+Configured in **Admin → Title and Logo** ([`#/admin/branding`], setting key `titleAndLogo`):
+
+| Setting | Description |
+|---------|-------------|
+| `logo` | Full-size logo (displayed in navigation drawer and login screen) |
+| `logoSmall` | Small logo (displayed in collapsed navigation) |
+| `favicon` | Custom favicon (32×32 PNG, base64 data URL) |
+| `appName` | Application display name |
+| `company` | Company name |
+| `companyWebsite` | Company website URL |
+| `appDescription` | Application description |
+| `aiDisclaimer` | Disclaimer text shown below the chat input |
+
+#### Theme
+
+Configured in **Admin → Theme** ([`#/admin/theme`], setting key `theme`). The UI theme is stored as a separate `IMaterialUITheme` document in Cosmos DB with:
+
+- **Palette mode** — Light or dark
+- **Primary color** — Main accent color
+- **Secondary color** — Secondary accent color
+- **Header color** — Custom AppBar color
+- **Typography** — Font family
+- **Spacing** — Base spacing unit
+
+### Embedded Agent Mode
+
+Any chat can be configured as a standalone embedded agent — a stripped-down chat interface without top navigation, drawer, or chat tabs bar, ideal for embedding in external applications via iframe.
+
+#### Enabling
+
+1. Open the chat's edit form
+2. Check **Embedded Agent Mode**
+3. An iframe embed code is automatically generated with a copy button
+
+#### Embed Code
+
+The generated embed code includes the full URL with the chat's hash route:
+
+```html
+<iframe
+  src="https://your-domain.com/path#/chat/chat-id"
+  width="100%"
+  height="600"
+  frameborder="0"
+  style="border: 1px solid #ccc; border-radius: 4px;">
+</iframe>
+```
+
+All existing authentication and chat-level ACL remains enforced — embedding does not bypass permissions.
+
+### Profile Sync
+
+Profile Sync automatically populates a user's Mem0 memory with data from their **Microsoft Graph profile** (beta endpoint), giving the AI contextual knowledge about the user.
+
+1. On app load, the client fetches the user's Graph profile collections
+2. Selected collections are formatted and stored as Mem0 memories in the `USER_GLOBAL` scope
+3. The AI can then reference this context (job title, department, skills, etc.) in conversations
+
+**Available Collections:** `accounts`, `addresses`, `anniversaries`, `awards`, `certifications`, `educationalActivities`, `emails`, `interests`, `languages`, `names`, `notes`, `patents`, `phones`, `positions`, `projects`, `publications`, `responsibilities`, `skills`, `webAccounts`, `websites`
+
+Configure in **Admin → Profile Sync** ([`#/admin/profilesync`], setting key `profileSync`).
+
+### Feedback System
+
+Findable includes a feedback system for collecting user ratings on AI responses.
+
+- **Thumbs up/down** — Per-message feedback buttons (individually toggleable via `enableThumbsUp` / `enableThumbsDown`)
+- **Detailed feedback form** — Optional text box for written feedback (`enableThumbsUpOrDownFeedbackTextBox`)
+- **Feedback persistence** — Stored in the `feedback` Cosmos DB container with message context
+- **Admin review** — **Admin → Feedback** ([`#/admin/feedback`]) page for reviewing and analyzing all feedback
+- **Chat log integration** — Feedback status displayed alongside chat history in logs
+
+### Assignments
+
+Assignments let administrators and chat owners push configured chats (with optional flows) to individuals or groups, track completion, and enforce deadlines — without mutating chat ACLs or bypassing downstream data-source security.
+
+An **assignment** is an obligation from a creator to an assignee to complete a specific chat. It carries:
+
+- **Target chat** — The chat template (AI settings, RAG sources, memory scope, optional flow)
+- **Assignee** — One UPN per row (groups are expanded into individual assignments)
+- **Completion criterion** — Configurable condition that satisfies the assignment
+- **Due date** (soft) and **Expiration** (hard)
+- **Retry budget** — `maxAttempts` caps how many times an assignee can attempt
+- **Opt-in capabilities** — `allowDelegation`, `allowRejection`
+- **Audit trail** — Attempts, delegation chain, timestamps, outcome data
+
+Assignments are stored in the `assignments` Cosmos DB container, partitioned by `/assigneeEmail`. See [How Notifications Work](/operations/notifications) for details on the full assignment lifecycle and delivery channels.
+
+### Feature Setup Guides
+
+Detailed guides for each major feature are available in `/docs`. Highlights:
+
+| Feature | Guide |
+|---------|-------|
+| Flow Designer | [Agent Nodes](/docs/langgraph-agent-node-guide.md) · [Custom Tools](/docs/langgraph-custom-tool-integrations.md) |
+| MCP Integration | [MCP + Flow Designer](/docs/langgraph-mcp-integration.md) |
+| Memory (Mem0) | [Integration Guide](/docs/MEM0_INTEGRATION.md) · [Testing Guide](/docs/MEMORY_TESTING_GUIDE.md) |
+| Natural Language SQL | [Quickstart](/docs/natural-language-sql-quickstart.md) · [Full Guide](/docs/natural-language-sql.md) |
+| Vector Stores | [Quick Reference](/docs/vector-store-quick-reference.md) |
+| Custom Tools | [Custom Tools Guide](/docs/custom-tools-guide.md) |
+| Email Notifications | [SendGrid](/docs/sendgrid-quick-start.md) · [Graph Mail](/docs/graph-mail-setup.md) |
+| Microsoft Teams Bot | [Teams Setup Guide](/teams-app/README.md) |
+| Slack Bot | [Slack Setup Guide](/slack-app/README.md) |
+| API Architecture | [API Design Patterns](/docs/architecture/API_ARCHITECTURE.md) |
+| Security Audit | [Backend Security](/docs/BACKEND_SECURITY_AUDIT.md) |

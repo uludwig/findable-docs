@@ -1,0 +1,301 @@
+---
+title: "Notifications & Human-in-the-Loop"
+description: "End-to-end notification lifecycle, multi-channel delivery (Teams, Slack, email), and per-provider compatibility."
+---
+
+Findable's notification system enables **human-in-the-loop** workflows where AI agents can pause execution, request input from specific users or groups, and resume once a response is submitted. Notifications are the bridge between a running flow and the humans it needs to interact with.
+
+### Notification Lifecycle
+
+```
+┌──────────────┐     ┌───────────────────┐     ┌────────────────────┐
+│  Flow Engine  │────▶│  Human Input Node  │────▶│  Create Notification│
+│  (executing)  │     │  (pauses flow)     │     │  Records + Broker   │
+└──────────────┘     └───────────────────┘     └────────────────────┘
+                                                         │
+                     ┌───────────────────────────────────┤
+                     ▼                                   ▼
+              ┌─────────────┐                   ┌──────────────────┐
+              │  In-App      │                   │  External Channel │
+              │  Notification │                   │  (Teams/Slack/   │
+              │  Center       │                   │   Email)          │
+              └──────┬──────┘                   └────────┬─────────┘
+                     │                                    │
+                     ▼                                    ▼
+              ┌─────────────┐                   ┌──────────────────┐
+              │  User fills   │                   │  User responds    │
+              │  VariableFill │                   │  via native UI    │
+              │  Dialog       │                   │  (card/modal/link)│
+              └──────┬──────┘                   └────────┬─────────┘
+                     │                                    │
+                     └───────────────┬────────────────────┘
+                                     ▼
+                          ┌──────────────────┐
+                          │  humanInputBroker │
+                          │  .submitResponse()│
+                          └────────┬─────────┘
+                                   ▼
+                          ┌──────────────────┐
+                          │  Flow resumes     │
+                          │  with response    │
+                          └──────────────────┘
+```
+
+### Step-by-Step Flow
+
+1. **Flow reaches a Human Input node** — The flow orchestrator encounters a node of type `human` and reads its configuration (`IHumanConfig`): input type, prompt text, assignees, timeout, and options.
+
+2. **Assignees are resolved** — Static assignees (from config) or dynamic assignees (from a flow variable) are resolved via `assigneeresolver.ts`. Groups are expanded into individual users via Microsoft Graph.
+
+3. **Ephemeral prompt template is created** — For `text`, `approval`, and `choice` input types, an ephemeral prompt template is stored in the `prompts` Cosmos DB container with `variableSpecs` describing the form fields. This template has a TTL and is auto-cleaned. The assignee emails are added to the prompt's `users` ACL so recipients can access it.
+
+4. **Notification records are created** — A `UserNotification` document is written to the `usernotifications` Cosmos DB container for each assignee. Each record includes:
+   - `executionId`, `flowId`, `nodeId` — to route the response back to the correct flow
+   - `prompt` — the rendered prompt text
+   - `inputType` — `text`, `approval`, `choice`, or `form`
+   - `options` — available choices (for approval/choice types)
+   - `promptTemplateId` — reference to the ephemeral prompt template
+   - `chatId` — the source chat ID so the recipient can view the original conversation
+   - `chatContext` — a summary of recent chat messages (last 10, truncated to 500 chars each) so the reviewer has context about what they're approving or responding to
+   - `expiresAt` — when the notification times out
+   - `status` — `pending`, `completed`, or `expired`
+
+5. **Broker registers a pending request** — The `humanInputBroker` creates a `HumanInputRequestDoc` in the `humaninput` container and holds an in-memory Promise that the flow orchestrator awaits.
+
+6. **SSE event is emitted** — A `human_input_required` event is sent to the originating client via the SSE stream, enabling the inline `HumanInputPrompt` component to render immediately if the user is the assignee.
+
+7. **External channels are notified** — If configured in **Admin → Notification Providers** ([`#/admin/notifications`], setting key `notificationProviders`), notifications are also sent via Teams (Adaptive Card), Slack (Block Kit), and/or email with actionable response UIs.
+
+8. **User responds** — The response comes through one of four channels (web client, Teams, Slack, email) and reaches `humanInputBroker.submitResponse()`, which validates the assignee, stores the response, and resolves the waiting Promise.
+
+9. **Flow resumes** — The orchestrator receives the response payload and continues execution with the human's input injected into the execution context.
+
+### In-App Notification Center
+
+The Notification Center (`#/notifications`) provides a unified inbox for all pending, completed, and expired human input requests assigned to the current user.
+
+**Features:**
+- **Tabbed view** — Separate tabs for Pending, Completed, and Expired notifications with unread counts
+- **Status indicators** — Color-coded chips and icons for each notification state
+- **Time remaining** — Human-readable countdown (e.g., "2 hours 30 minutes") for pending notifications
+- **Chat context** — Expandable section showing recent chat messages from the conversation that triggered the notification, so reviewers understand what they're responding to
+- **Open Chat link** — Direct navigation to the source chat (when `chatId` is available)
+- **VariableFillDialog** — Clicking "Respond" fetches the ephemeral prompt template and opens a form with the appropriate input controls (text area, dropdown, etc.)
+- **Fallback rendering** — If the ephemeral prompt template has expired or is unavailable, the UI synthesizes a fallback template from the notification's `inputType` and `options`
+
+### Chat Context in Notifications
+
+When a Human Input node fires during a flow execution, the notification captures a snapshot of the conversation context:
+
+| Field | Description |
+|-------|-------------|
+| `chatId` | The source chat's ID — enables "Open Chat" navigation |
+| `chatContext.chatName` | The chat or flow name for display |
+| `chatContext.recentMessages` | Last 10 messages (role + content, truncated to 500 chars) |
+| `chatContext.totalMessages` | Total message count in the conversation |
+
+This context is displayed as a collapsible panel in the notification card, showing each message with role labels (User, AI, System). This is especially important for approval workflows where the reviewer needs to understand what was discussed before making a decision.
+
+### Notification Data Model
+
+**Cosmos DB container:** `usernotifications` (partition key: `/email`)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | `{executionId}-{nodeId}` |
+| `executionId` | string | Flow execution instance ID |
+| `flowId` | string | Flow definition ID |
+| `nodeId` | string | Human Input node ID |
+| `email` | string | Assignee's email (partition key) |
+| `prompt` | string | Rendered prompt text |
+| `inputType` | enum | `text`, `approval`, `choice`, `form` |
+| `options` | string[] | Available choices |
+| `promptTemplateId` | string | Reference to ephemeral prompt template in `prompts` container |
+| `chatId` | string | Source chat ID |
+| `chatContext` | object | `{ chatName, recentMessages[], totalMessages }` |
+| `status` | enum | `pending`, `completed`, `expired` |
+| `expiresAt` | string | ISO-8601 expiration timestamp |
+| `isRead` | boolean | Whether the user has seen the notification |
+| `response` | string | The submitted response (after completion) |
+| `meta` | object | `{ label, variables[] }` — display metadata |
+
+### Human Input Broker
+
+The `humanInputBroker` (`humaninputbroker.ts`) is the central coordination point for all human input requests. It manages request state in the `humaninput` Cosmos DB container and resolves in-memory Promises when responses arrive.
+
+**Key behaviors:**
+- **Multi-instance safe** — Request state is persisted in Cosmos DB with a polling fallback (2s interval) so responses submitted on one server instance are detected by the instance holding the waiting Promise
+- **Assignee validation** — Responses are validated against the assignee list by matching userId (GUID), email, or UPN
+- **Duplicate prevention** — Each user can only submit one response per request
+- **Assignee strategy** — Supports `any` (first response completes) or `all` (waits for every assignee)
+- **Timeout handling** — Requests expire after the configured timeout and the flow receives an error
+- **TTL cleanup** — Request documents have a per-item `_ttl` for automatic Cosmos DB cleanup
+
+### API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/user/notifications` | List all notifications for the authenticated user |
+| `PATCH` | `/user/notifications/:id/read` | Mark a notification as read |
+| `POST` | `/user/notifications/:id/respond` | Submit a response (plain string or structured `{ values, note }`) |
+| `GET` | `/prompts/:id` | Fetch ephemeral prompt template (ACL-checked) |
+| `POST` | `/flow/human-response` | Submit response from inline chat HumanInputPrompt |
+| `GET` | `/flow/external-response` | Render email response form |
+| `POST` | `/flow/external-response` | Submit email response |
+
+---
+
+## Notification Provider Compatibility
+
+Findable's human-in-the-loop flows can send interactive prompts to **Teams**, **Slack**, and **Email**. When a prompt template is used, each provider maps the template's `variableSpecs` to its native UI elements. Not all variable types are supported equally across platforms.
+
+### Variable Type Support Matrix
+
+| variableSpec type | Web Client | Teams (Adaptive Card) | Slack (Block Kit modal) |
+|---|---|---|---|
+| text / string | ✅ TextField | ✅ Input.Text | ✅ plain_text_input |
+| textarea / multiline | ✅ Multi-row TextField | ✅ Input.Text (multiline) | ✅ plain_text_input (multiline) |
+| select | ✅ Dropdown | ✅ Input.ChoiceSet | ✅ static_select |
+| multiselect | ✅ Multi-select chips | ✅ Input.ChoiceSet (multi) | ✅ multi_static_select |
+| number | ✅ Numeric input | ✅ Input.Number | ✅ number_input |
+| boolean | ✅ Toggle switch | ✅ Input.Toggle | ✅ radio_buttons (Yes/No) |
+| date | ✅ Date picker | ✅ Input.Date | ⚠️ Falls back to text input |
+| file | ✅ File upload | ❌ Falls back to text | ❌ Falls back to text |
+| user / multiuser | ✅ Azure AD picker | ❌ Falls back to text | ❌ Falls back to text |
+| group / multigroup | ✅ Azure AD picker | ❌ Falls back to text | ❌ Falls back to text |
+| range | ✅ Slider | ❌ Falls back to text | ❌ Falls back to text |
+| datetime / time | ✅ Date+Time picker | ❌ Falls back to text | ❌ Falls back to text |
+| hierarchy | ✅ Tree builder | ❌ Falls back to text | ❌ Falls back to text |
+| password | ✅ Masked input | ❌ Falls back to text | ❌ Falls back to text |
+| table | ✅ Editable table | ❌ Falls back to text | ❌ Falls back to text |
+| hidden | ✅ Injected silently | ⚠️ Omitted from card | ⚠️ Omitted from modal |
+
+### autoSubmitOnSelect
+
+`select` and `multiselect` variables support an `autoSubmitOnSelect: true` flag that submits the form immediately when the user taps an option, with no separate Submit button click required. This is only meaningful for the **`buttons` variant** (toggle-button group) and only applies to the **Web Client** — Teams, Slack, and Email are unaffected.
+
+| Condition | Behavior |
+|-----------|----------|
+| `variant: 'buttons'` + `autoSubmitOnSelect: true` | Tap on any button option captures the value and submits the form in one gesture |
+| `variant: 'buttons'` + no flag (or `false`) | Tap selects the option; user must click Submit separately |
+| `variant: 'dropdown'` (or any non-buttons variant) | Flag is ignored; Submit button always required |
+
+**Flow author notes:**
+- Set the flag on any buttons-variant `select` where the choice itself is the entire interaction (e.g. "Continue / Ask a Question" branch pages in training flows).
+- The flag is carried through server-side ephemeral form template generation (`ephemeralformutils.ts`) and is preserved in the `variableSpec` delivered to the client.
+- Single-option forms already fire a "trivial form fast path," but setting `autoSubmitOnSelect: true` is recommended for explicitness and future-proofing.
+
+### Platform-Specific Limitations
+
+**Teams (Adaptive Cards)**
+- All supported inputs render **inline** in the card — single-step interaction.
+- Grouped options (`ISelectOptionGroup`) and option metadata (descriptions, icons, disabled states) are flattened to simple label/value pairs.
+- Dynamic `optionsSource` (e.g., populate from AI Models list) is not resolved at render time.
+- Client-side validation rules (regex, min/max) are not enforced; validation occurs server-side on submit.
+
+**Slack (Block Kit)**
+- Only a **single** `select` (≤5 options) or `boolean` variable renders as inline buttons for one-tap response.
+- All other prompts require a **two-step flow**: user clicks "Open Form" → Slack modal opens with input fields. This is an inherent Slack platform limitation.
+- Slack's `datepicker` element exists in message blocks but is **not available** inside modal `input` blocks, so `date` falls back to text.
+- `static_select` / `multi_static_select` are capped at **100 options** per element.
+- Same grouped options, dynamic source, and validation limitations as Teams.
+
+**Email**
+- Sends an HTML email with a **response link** — all form interaction happens in the web client after clicking through. No inline form rendering.
+
+> **Design guidance:** For prompts that will be delivered via Teams or Slack, prefer `text`, `select`, `boolean`, and `number` variable types for the best cross-platform experience. Avoid `file`, `user`, `hierarchy`, and `table` types unless the prompt will only be answered in the web client.
+
+### Response Flow
+
+All four response channels ultimately converge on `humanInputBroker.submitResponse()`, which updates the request document in the `humaninput` Cosmos DB container and resolves the waiting Promise (immediately on the same instance, or via polling on a different instance). The channels differ in interaction model, authentication, and retry behavior.
+
+| Channel | How the user responds | Steps |
+|---|---|---|
+| **Web Client** | `HumanInputPrompt` renders inline in the chat. For `form` type, opens `VariableFillDialog` with full MUI controls. Submits via `POST /flow/human-response` (authenticated). | 1 |
+| **Teams** | User fills in the Adaptive Card and clicks "Submit Response". The Bot Framework webhook delivers the submission to `teamsrouter.ts → handleAdaptiveCardSubmission`. | 1 |
+| **Slack (inline)** | For a single `select` (≤5 options) or `boolean`, the user taps an inline button. The action payload is sent directly to `slackrouter.ts`. | 1 |
+| **Slack (modal)** | User clicks "Open Form" → Slack modal opens with input fields → user fills in and clicks Submit → `view_submission` event handled by `handleModalSubmission`. | 2 |
+| **Email** | User clicks a link → `GET /flow/external-response` renders an HTML form in the browser → user submits via `POST /flow/external-response`. | 2 |
+
+**Payload shape** — All channels produce the same `HumanInputPayload`:
+
+| Field | Simple response | Form response |
+|---|---|---|
+| `value` | The single string value | `null` |
+| `values` | `undefined` | `Record<string, any>` keyed by field name |
+| `note` | Source attribution (e.g. "Submitted via Slack modal") | Same |
+
+### Authentication & Security
+
+Each response channel uses a different authentication mechanism. The secure token is a 32-byte cryptographically random hex string that is one-time-use and expires after the flow's configured timeout.
+
+| Channel | Auth mechanism | Unauthenticated user can respond? |
+|---|---|---|
+| **Web Client** | MSAL (Entra ID session) | ❌ No — blocked by `authMiddleware` |
+| **Teams** | Bot Framework token verification + secure token | ❌ No — Teams validates user identity |
+| **Slack** | Slack signing secret (HMAC-SHA256) + secure token | ❌ No — Slack validates workspace membership |
+| **Email** | Secure token only (no identity verification) | ⚠️ **Yes** — anyone with the token URL can respond |
+
+**Token lifecycle differences:**
+
+- **Teams & Slack** — Token is consumed (invalidated) *before* the broker call. If the broker call fails after consumption, the user **cannot retry**.
+- **Email** — Token is consumed *after* successful broker submission. If submission fails, the user **can retry** with the same link.
+- **Web Client** — Does not use secure tokens; relies on the authenticated session and passes `executionId` + `nodeId` directly.
+
+> **Security note:** The email channel is intentionally public to support users responding from devices where they are not logged into the web app. The trade-off is that forwarding the email link effectively delegates response access. The mitigations (unguessable token, one-time use, expiry) make this acceptable for most workflows, but avoid routing high-security prompts exclusively through email.
+
+---
+
+## Assignments
+
+Assignments let administrators and chat owners push configured chats (with optional flows) to individuals or groups, track completion, and enforce deadlines — without mutating chat ACLs or bypassing downstream data-source security.
+
+### Lifecycle
+
+```
+pending ─▶ in_progress ─┬─▶ completed   (criterion satisfied)
+                        ├─▶ failed      (criterion unmet; no retries left)
+                        ├─▶ cancelled   (creator/admin revoked)
+                        ├─▶ rejected    (assignee declined — opt-in)
+                        ├─▶ delegated   (assignee handed off — opt-in)
+                        └─▶ expired     (auto by sweep past expiresAt)
+```
+
+All terminal states preserve the assignee's chatlog as a personal chat. None are reinstatable.
+
+### Completion Criteria
+
+| Value | Satisfied when |
+|---|---|
+| `chat_visited` | Assignee opens the chatlog at least once |
+| `chat_engaged` | Assignee sends ≥1 message |
+| `flow_started` | Flow execution begins (first node after START) |
+| `flow_completed` | Flow reaches END regardless of outcome |
+| `flow_passed` | Flow reaches END **and** sets `__assignmentPassed = true` |
+| `manual` | Assignee clicks **Mark Complete** |
+
+For graded flows (e.g., training quizzes), the scoring node writes `executionContext.__assignmentPassed` and `executionContext.__assignmentOutcome` to record pass/fail with scores.
+
+### Delegation & Rejection
+
+- **Delegation** — When `allowDelegation` is true, the assignee can hand off to another user. Spawns a successor assignment; original transitions to `DELEGATED`. Chains are supported; loops are prevented.
+- **Rejection** — When `allowRejection` is true, the assignee can decline with an optional reason. Status transitions to `REJECTED` and the creator is notified.
+
+### Recurring Assignments
+
+Assignments support **cron-based recurrence**. A cron expression (e.g., `0 9 * * 1` for every Monday at 9 AM) triggers automatic re-creation of the assignment on schedule, enabling periodic training, compliance checks, or recurring workflows.
+
+### UI Surfaces
+
+| Surface | Route | Description |
+|---------|-------|-------------|
+| **Assign Dialog** | Chat overflow menu | Principal picker, due/expiration, criterion, retry budget, delegation/rejection toggles, version pin |
+| **Inbox** | `/assignments` | Active vs history tabs. Actions: Start, Resume, Retry, Mark Complete, Delegate, Decline |
+| **Sent Dashboard** | `/assignments/sent` | DataGrid of created assignments with filters, status, remind/cancel/reassign actions |
+| **Notification Center** | `/notifications` | Scope filter separates inbound and outbound assignment notifications |
+
+### Security
+
+An assignment is a **scoped, revocable, audited grant** — it does **not** mutate the chat template's ACL. All downstream backend resources (Azure Search, SharePoint, OneDrive, SQL, MCP, memory) continue to enforce their own ACLs against the **assignee's identity**. Assignments grant zero additional data access beyond the chat template itself.
+
+See [Assignments Design](/docs/architecture/ASSIGNMENTS_DESIGN.md) and [Assignments Feature Guide](/docs/features/ASSIGNMENTS.md) for deeper coverage.

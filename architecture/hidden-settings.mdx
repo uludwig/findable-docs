@@ -1,0 +1,19 @@
+---
+title: "Hidden Settings"
+description: "Undocumented settings that can only be modified directly in the Cosmos DB settings document."
+---
+
+These settings are not exposed in the admin UI. They can be set directly in the Cosmos DB `settings` document.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `enablePremium` | `boolean` | `false` | Gates premium features: Flow Designer, SQL Connections, Tools Registry, MCP, and Notifications. |
+
+To modify a hidden setting, edit the settings document directly in Cosmos DB Data Explorer:
+
+```json
+{
+  "id": "default",
+  "enablePremium": true
+}
+```

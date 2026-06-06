@@ -1,0 +1,116 @@
+---
+title: "Chat Types & Access"
+description: "Per-chat access patterns — workspace, shared, and personal — and how files and ACL interact with each."
+---
+
+Findable has three distinct types of chats, each with different storage, lifecycle, and access control characteristics. For the full chat-type comparison, see [Architecture Overview](/architecture/overview). This page focuses on how chat access interacts with files, ACL, and the multi-source RAG pipeline.
+
+### Shared Files & Azure Blob Storage
+
+Shared and personal files are stored in **Azure Blob Storage** and made searchable via **Azure AI Search**. A single blob container holds all files, organized by folder path.
+
+**Container layout:**
+
+```
+{azureBlobStorageContainerName}/          ← default: "data"
+├── {azureBlobStorageSharedFolder}/       ← default: "Shared"
+│   ├── {folderName-1}/                   ← one folder per shared chat's file set
+│   │   ├── report.pdf
+│   │   └── slides.pptx
+│   └── {folderName-2}/
+│       └── handbook.docx
+└── {azureBlobStoragePersonalFolder}/     ← default: "Personal"
+    ├── {sanitized-upn-1}/                ← e.g. "john-doe-contoso-com"
+    │   └── notes.txt
+    └── {sanitized-upn-2}/
+        └── data.csv
+```
+
+- **Shared folders** are scoped per chat — each chat with `dataSourceType: SHARED` gets its own subfolder under the shared root
+- **Personal folders** are scoped per user — the user's UPN is sanitized (`@` and `.` replaced with `-`) and used as the subfolder name
+
+**Data source naming:** The folder path (e.g. `Shared/my-folder`) is sanitized by `generateDataSourceName()` — slashes become dashes, all lowercase, non-alphanumeric characters stripped. This produces a name like `shared-my-folder` which is used as the identifier for **all four** Azure AI Search resources tied to that folder.
+
+**Search resource pipeline:** When a user creates a folder and clicks "Create Search Resources", the server provisions four Azure AI Search resources — all sharing the same sanitized name:
+
+| Resource | Purpose |
+|----------|---------|
+| **Data Source** | Points Azure Search at the blob folder path |
+| **Index** | Schema for searchable fields (content, metadata, vectors) |
+| **Skillset** | AI enrichment pipeline (OCR, chunking, embeddings) |
+| **Indexer** | Scheduled job that crawls the data source → skillset → index |
+
+Resources are created from JSON templates in `/src/azure/search/schemas/{apiVersion}/` and support both API key and managed identity authentication.
+
+**Indexing schedule:**
+- Shared folder indexers run on a configurable interval: `azureSharedFolderIndexingIntervalInMinutes` (default: 60 min), starting at `azureSharedFolderIndexingStartTime` (default: 02:00)
+- After file uploads, the indexer can also be triggered on-demand
+
+**Personal folder retention:** A background purge job runs periodically and deletes personal folders (blobs + all search resources) that haven't been accessed within `personalFolderRetentionInHours` (default: 72h). Access timestamps are tracked in the `datasourcelastaccessed` Cosmos container.
+
+**ACL on file operations:**
+- **Personal files** — path-scoped by the user's UPN; no chat ACL check needed
+- **Shared files** — require `chatId`; the server validates the user's entitlement against the chat via `validateChatAccess()`. Read access requires any role (owner/contributor/user); write/delete requires owner or contributor
+- **Admins** bypass all file ACL checks
+
+**Configurable settings** (Admin → Personal Workspace [`#/admin/workspace`] for file location; Admin → AI Search Endpoints [`#/admin/search`] for index settings):
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `azureBlobStorageContainerName` | `data` | Blob container name |
+| `azureBlobStorageSharedFolder` | `Shared` | Root folder for shared files |
+| `azureBlobStoragePersonalFolder` | `Personal` | Root folder for personal files |
+| `azureBlobAuthType` | `apiKey` | Authentication: `apiKey`, `connectionString`, or `managedSystemIdentity` |
+| `personalFolderRetentionInHours` | `72` | Hours before unused personal folders are purged (0 = disabled) |
+| `azureSharedFolderIndexingIntervalInMinutes` | `60` | Indexer schedule for shared folders |
+
+### Personal Files in Shared Chats
+
+When `enablePersonalFilesInSharedChats` is enabled, users can upload and search their **own personal files** while inside a shared chat. The files are stored in the user's private storage — never in the shared chat's data source.
+
+**Storage backend** is determined by `personalFileLocation` (**Admin → Personal Workspace** [`#/admin/workspace`]):
+
+| Backend | Where uploads go | Folder structure |
+|---------|-----------------|------------------|
+| **Azure Blob** (default) | User's private Azure Blob container | `Private/` folder |
+| **OneDrive** | User's OneDrive | `{oneDriveFolderName}/AttachedFiles/{chatId}/` (e.g. `AIAssistant/AttachedFiles/abc123/`) |
+
+**OneDrive folder layout** (when `personalFileLocation = OneDrive`):
+
+```
+User's OneDrive
+└── AIAssistant/                    ← configurable via oneDriveFolderName
+    ├── Workspace/                  ← ephemeral workspace files
+    └── AttachedFiles/              ← per-chat attached files
+        ├── {chatId-1}/             ← files attached while in shared chat 1
+        └── {chatId-2}/             ← files attached while in shared chat 2
+```
+
+**How it works at runtime:**
+1. User toggles to "My Files" inside a shared chat via the Data Source sidebar (or uploads a file via the prompt input)
+2. The client sets `sourceState[sourceId].disabled = true` on shared sources and activates the user's WORKSPACE source entry
+3. The client sends the `dataSources[]` array with runtime `sourceState` applied — the shared chat's persisted configuration is never modified
+4. The server's `chatSecurityGuard` validates the user is only accessing **their own** personal data source (prefix check against the user's UPN)
+5. The RAG query runs against the user's personal index — the shared chat's index is not modified
+
+**Gating:**
+- **Global toggle:** `enablePersonalFilesInSharedChats` (**Admin → Personal Workspace** [`#/admin/workspace`]) — controls visibility of the personal files panel in all shared chats
+- **Per-source control:** WORKSPACE sources in `dataSources[]` have `allowUserToggle` — when true, end users can disable/enable their personal source at runtime from the sidebar
+- Personal files can always be attached via the prompt file input regardless of panel visibility
+
+**OneDrive shared index:** When using OneDrive, all users' attached files are indexed into a single shared Azure AI Search index (`oneDriveSharedIndexName`). ACL filtering ensures each user's queries only return their own files.
+
+**Multi-Source Architecture:**
+- The shared chat's `dataSources[]` may include a WORKSPACE source entry (type: `workspace`) alongside SHARED sources
+- WORKSPACE sources resolve `indexName` at runtime from the authenticated user's UPN (not stored in the chat configuration)
+- Users toggle between shared and personal sources via the Data Source sidebar — this only affects their runtime `sourceState`, not the persisted chat configuration
+
+### Entity Scope Configuration
+
+The entity scope system controls Personal/Shared/Public availability for all entity types (chats, prompts, flows, pages, etc.):
+
+- **Global defaults** (`defaultEntityScopeConfig`) — Set base rules for all entity types
+- **Per-type overrides** (`entityScopeOverrides`) — Override the global defaults for specific entity types
+- Configure both in **Admin → Entity Scopes** ([`#/admin/scopes`])
+
+See [Entity Scope Configuration](/access-identity/entity-scopes) for the full reference.

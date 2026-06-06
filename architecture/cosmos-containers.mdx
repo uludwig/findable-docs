@@ -1,0 +1,127 @@
+---
+title: "Cosmos DB Containers & TTL"
+description: "Container layout, partition-key strategy, and TTL behaviour for the Cosmos DB schema."
+---
+
+### Cosmos DB TTL for Ephemeral Prompts
+
+Findable's flow designer creates **ephemeral prompt templates** in the `prompts` container when human input nodes execute. These are short-lived documents (prefixed `eph-`) that are automatically cleaned up through three mechanisms:
+
+1. **Active deletion** — The orchestrator deletes the prompt immediately after receiving a response.
+2. **Periodic sweep** — A background job (`/server/jobs/ephemeral-cleanup`) runs every 6 hours to catch any that were missed.
+3. **Cosmos DB TTL** — Each ephemeral prompt sets a `_ttl` field (in seconds). Cosmos DB will auto-delete expired documents **if TTL is enabled on the container**.
+
+#### Enabling TTL on the Prompts Container
+
+For **new deployments**, TTL is configured automatically — the server passes `defaultTtl: -1` when creating the `prompts` container via `createIfNotExists`.
+
+For **existing deployments** where the `prompts` container already exists, `createIfNotExists` will not update the container's TTL setting. You must enable it manually:
+
+##### Option A: Azure Portal
+
+1. Navigate to your **Cosmos DB account** in the Azure Portal
+2. Open **Data Explorer**
+3. Expand your database and select the **`prompts`** container
+4. Click **Settings** (or **Scale & Settings**)
+5. Under **Time to Live**, select **On (no default)**
+   - This sets `defaultTtl = -1`, which means "no container-wide expiry, but honour per-item `_ttl` values"
+6. Click **Save**
+
+##### Option B: Azure CLI
+
+```sh
+az cosmosdb sql container update \
+  --account-name <your-cosmos-account> \
+  --database-name <your-database-name> \
+  --name prompts \
+  --resource-group <your-resource-group> \
+  --ttl -1
+```
+
+##### Option C: Azure PowerShell
+
+```powershell
+Update-AzCosmosDBSqlContainer `
+  -AccountName <your-cosmos-account> `
+  -DatabaseName <your-database-name> `
+  -Name prompts `
+  -ResourceGroupName <your-resource-group> `
+  -TtlInSeconds -1
+```
+
+#### Verifying TTL is Active
+
+After enabling, you can verify in the Portal by checking that the container's **Time to Live** setting shows **On (no default)**. New ephemeral prompts will then be auto-deleted by Cosmos DB after their `_ttl` expires (typically 1 hour).
+
+> **Note:** Even without TTL enabled, ephemeral prompts are still cleaned up by the active deletion and periodic sweep mechanisms. TTL is a defense-in-depth measure for edge cases like server crashes or flow timeouts.
+
+### Cosmos DB Container Reference
+
+Containers are grouped by purpose. Partition keys are chosen to match the dominant query pattern: `/id` for shared/global resources, `/email` for per-user data, and purpose-specific keys (`/executionId`, `/flowId`, `/assigneeEmail`, `/createdBy`) where reads are scoped to a particular execution, flow, or owner.
+
+#### Core & content library
+
+| Container | Partition Key | Description |
+|-----------|--------------|-------------|
+| `settings` | `/id` | Application-wide settings (single `"default"` document) |
+| `chat` | `/id` | Chat tab configurations (`IChatTabDBItem`) — data source, AI options, ACL |
+| `prompts` | `/id` | Prompt templates and groups (per-item TTL for ephemeral prompts) |
+| `flows` | `/id` | Flow Designer flow definitions and flow groups |
+| `pages` | `/id` | Navigation pages (hierarchical via `parentPageId`) |
+
+#### AI & tools
+
+| Container | Partition Key | Description |
+|-----------|--------------|-------------|
+| `aimodelendpoints` | `/id` | AI model endpoints (Azure OpenAI, OpenAI, Anthropic, Gemini, etc.) |
+| `aisearchendpoints` | `/id` | Azure AI Search endpoint configurations |
+| `aitoolproviders` | `/id` | Tool provider configs (Tavily, SQL, Cosmos, Exchange, OneDrive, etc.) |
+| `mcpservers` | `/id` | MCP server registry entries |
+| `datasources` | `/id` | Datasource catalog entries |
+| `dataconnections` | `/id` | SQL/database connection configs for NL-SQL |
+
+#### Per-user data (partitioned by `/email`)
+
+| Container | Partition Key | Description |
+|-----------|--------------|-------------|
+| `chatlog` | `/email` | Conversation history — every message exchange with timestamps and citations |
+| `feedback` | `/email` | User feedback (thumbs up/down) on AI responses |
+| `usersettings` | `/email` | Per-user settings (language, drawer state, AI defaults, memory preferences) |
+| `userfavorites` | `/email` | User-bookmarked prompts, flows, and chats |
+| `usertheme` | `/email` | Per-user Material UI theme preferences |
+| `usernotifications` | `/email` | In-app notifications for human-in-the-loop workflows |
+| `usernotificationpreferences` | `/email` | Notification channel preferences (email, Teams, Slack, SMS) |
+| `datasourcelastaccessed` | `/email` | Per-user data source activity (used by purge job) |
+| `onedrivelastaccessed` | `/email` | Per-user OneDrive activity (used by purge job) |
+| `userrecommendations` | `/email` | Cached recommendations doc (singleton per user) |
+| `recommendationfeedback` | `/email` | Per-user feedback on recommendations |
+| `recommendationsaved` | `/email` | Recommendations saved into the user's prompt library |
+
+#### Flow execution & human input (TTL-enabled)
+
+| Container | Partition Key | Description |
+|-----------|--------------|-------------|
+| `humaninput` | `/executionId` | Active human-input requests awaiting response (per-item TTL) |
+| `flowcheckpoints` | `/executionId` | Flow execution checkpoints for resume (per-item TTL) |
+| `flowexecutions` | `/flowId` | Flow execution runs — "show runs for this flow" (per-item TTL) |
+| `flowexecutionsteps` | `/executionId` | Per-step execution trace (per-item TTL) |
+
+#### Assignments
+
+| Container | Partition Key | Description |
+|-----------|--------------|-------------|
+| `assignments` | `/assigneeEmail` | Per-assignee obligations — pushed chats/flows with completion tracking, deadlines, and delegation |
+| `assignmentschedules` | `/createdBy` | Recurring assignment templates owned by their creator |
+
+#### Integrations & operations
+
+| Container | Partition Key | Description |
+|-----------|--------------|-------------|
+| `sharepointentitlements` | `/id` | SharePoint per-user entitlement registry |
+| `teamsappicons` | `/id` | Cached Teams app icons |
+| `teamsconversationreferences` | `/id` | Teams conversation references for proactive messaging |
+| `jobs` | `/id` | Periodic-job throttle records (sweep, cleanup, purge) |
+
+> **Partition-key strategy.** `/id` is the default for shared/global resources where queries are by document ID. `/email` is used for user-scoped data so each user's documents land in a single partition for cheap inbox-style reads. `/executionId` colocates everything related to a single flow run. `/flowId` colocates execution runs by flow. `/assigneeEmail` mirrors the `/email` pattern for assignment inboxes. `/createdBy` mirrors it for owner-scoped recurring schedules.
+>
+> **TTL behaviour.** TTL-enabled containers set `defaultTtl: -1` so Cosmos honours per-item `_ttl` values without applying a container-wide expiry. Items written without `_ttl` live forever; ephemeral items (e.g. unresolved human-input requests, ephemeral prompts) set `_ttl` and are auto-deleted by Cosmos after expiry. A periodic sweep (`ephemeralcleanup`, `humaninputcleanup`, `assignmentsweep`) provides a defence-in-depth fallback in case TTL is disabled at the container level (which can happen when `createIfNotExists` is called against a pre-existing container that was created without TTL).

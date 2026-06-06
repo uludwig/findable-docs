@@ -1,0 +1,69 @@
+---
+title: "Production Deployment"
+description: "Single-port Express deployment on Azure App Service with PM2, managed identity, and environment variable overrides."
+---
+
+> **Important:** Findable does **not** use a `.env` file in production. All configuration is managed through **Azure App Service → Configuration → Application Settings**. The `.env` file is strictly for local development.
+
+### Single-Port Deployment
+
+In production, the application serves both the React frontend and Node.js backend from a single Express server on a single port:
+
+```sh
+# Build everything
+npm run build
+
+# Start production server
+npm start  # or: node dist/index.js
+```
+
+PM2 is used as the process manager (see `ecosystem.config.js`).
+
+### Azure App Service Configuration
+
+Set the Cosmos DB connection variables (see [Setup Wizard → Prerequisites](/getting-started/setup-wizard)) as **Application Settings** in Azure App Service → Configuration. Do not use a `.env` file in production.
+
+All other application settings (AI model endpoints, search endpoints, feature flags, auth config, etc.) are stored in the **Cosmos DB `settings` container** and managed through the Admin UI. This means:
+
+- **No secrets in source control** — Cosmos DB connection is the only environment-level config
+- **Runtime configuration** — Admins can change settings without redeployment
+- **Centralized management** — All settings visible and editable through the Admin interface
+
+### Managed Identity (Recommended)
+
+For production, use [Azure Managed System Identity](https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/) instead of API keys:
+
+1. Enable system-assigned managed identity on your [App Service](https://portal.azure.com/#browse/Microsoft.Web%2Fsites)
+2. Grant the identity access to Cosmos DB, Azure AI Search, Storage, etc.
+3. Set `AZURE_COSMOS_AUTH_TYPE=managedSystemIdentity`
+4. Omit `AZURE_COSMOS_KEY` — the managed identity handles authentication
+
+### Environment Variables Reference
+
+These are the environment variables recognized by the server. In production, set them as **Azure App Service → Configuration → Application Settings**. For local development, use a `.env` file in the project root.
+
+**Required (Cosmos DB connection):**
+
+| Variable | Description |
+|----------|-------------|
+| `AZURE_COSMOS_ENDPOINT` | Cosmos DB account endpoint URL |
+| `AZURE_COSMOS_KEY` | Cosmos DB account key (omit when using managed identity) |
+| `AZURE_COSMOS_DB` | Cosmos DB database name |
+| `AZURE_COSMOS_AUTH_TYPE` | `apiKey` (default) or `managedSystemIdentity` |
+
+**Optional (overrides for settings normally stored in Cosmos DB):**
+
+| Variable | Description |
+|----------|-------------|
+| `TENANT_ID` | Azure AD tenant ID |
+| `GRAPH_CLIENT_ID` | Server app registration client ID |
+| `GRAPH_CLIENT_SECRET` | Server app registration client secret |
+| `GRAPH_AUTH_TYPE` | `clientCredentials` (default) or `managedSystemIdentity` |
+| `SHAREPOINT_CLIENT_ID` | SharePoint app registration client ID |
+| `SHAREPOINT_CLIENT_SECRET` | SharePoint app registration client secret |
+| `PORT` | Server listen port (default: `3000` in dev, `8080` in production) |
+| `LOG_LEVEL` | Winston log level: `error`, `warn`, `info` (default), `debug` |
+| `FINDABLE_BASE_URL` | Public URL for notification links (e.g., `https://your-app.azurewebsites.net`) |
+| `NODE_ENV` | `development` or `production` |
+
+> **Reminder:** Environment variables take precedence over Cosmos DB values when present. Most settings should be managed through the Admin UI — use environment variables only for bootstrapping and infrastructure-level configuration.

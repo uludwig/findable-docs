@@ -1,0 +1,84 @@
+---
+title: "Vector Store Integration"
+description: "Query external vector stores as part of multi-source RAG or from inside Flow Designer workflows."
+---
+
+Findable provides two paths for querying external vector stores:
+
+1. **Vector Retriever data source** (`type: 'vectorretriever'` in `dataSources[]`) — configure directly on a chat to query a vector store as part of multi-source RAG
+2. **Flow Designer tool nodes** (`integrationType: 'vector_store'`) — use a vector store as a tool inside a Flow Designer workflow
+
+Both approaches share the same `IDataConnection` registry for managing credentials and endpoints.
+
+### Supported Providers
+
+**Tier 1 — High Priority (`DataPlatformType` values in `IDataConnection`):**
+
+| Provider | Platform Type | Description |
+|----------|--------------|-------------|
+| [Pinecone](https://app.pinecone.io/) | `pinecone` | Managed vector database |
+| [pgvector](https://github.com/pgvector/pgvector) | `pgvector` | PostgreSQL vector extension |
+| [Weaviate](https://weaviate.io/) | `weaviate` | Open-source vector database |
+| [Qdrant](https://qdrant.tech/) | `qdrant` | High-performance vector similarity engine |
+| [Chroma](https://www.trychroma.com/) | `chroma` | Open-source embedding database |
+| [Elasticsearch](https://www.elastic.co/elasticsearch) | `elasticsearch` | Full-text + vector search |
+| [OpenSearch](https://opensearch.org/) | `opensearch` | AWS-managed search and analytics |
+| [Redis](https://redis.io/) | `redis` | In-memory vector search |
+
+**Tier 2 — Enterprise/Cloud (`VECTOR_STORE_PROVIDER` in Flow Designer):**
+
+Oracle Vector, IBM watsonx, AWS Kendra, Vertex AI Search, Milvus, MongoDB Atlas
+
+**Tier 3 — Specialized:**
+
+Vespa, LanceDB, FAISS, Marqo
+
+### Data Connection Fields (Vector Stores)
+
+Vector store connections are managed via the unified `IDataConnection` interface in the `dataconnections` Cosmos container. When `type` is a vector store platform, these additional fields apply:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `index` | `string?` | Index / collection / class name (Pinecone index, Weaviate class, Qdrant collection) |
+| `namespace` | `string?` | Namespace / partition (Pinecone namespace, Redis prefix) |
+| `verifySSL` | `boolean?` | Verify SSL certificates (default: true) |
+| `maxRetries` | `number?` | Maximum retry attempts |
+| `connectionString` | `string?` | Full connection string (alternative to individual fields) |
+
+Authentication types vary by provider — see `getAuthTypesForPlatform()` in `dataConnectionTypes.ts`.
+
+### Vector Retriever Data Source
+
+To query a vector store directly from a chat's RAG pipeline, add a `vectorretriever` entry to the chat's `dataSources[]`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `'vectorretriever'` | Identifies this as a vector retriever source |
+| `vectorConnectionId` | `string` | FK to `IDataConnection` in the data connections registry |
+| `vectorTopK` | `number?` | Number of results (default: 5) |
+| `vectorSearchType` | `'vector' \| 'semantic' \| 'hybrid' \| 'keyword'` | Search strategy |
+| `vectorMinScore` | `number?` | Minimum similarity score (0–1) |
+
+The orchestrator queries the vector store in parallel with other data sources and merges results into the RAG context.
+
+### Flow Designer Vector Store Config (`IVectorStoreConfig`)
+
+For Flow Designer tool nodes with `integrationType: 'vector_store'`, the configuration has three parts:
+
+**Connection** (`IVectorStoreConnectionConfig`):
+- `endpoint`, `apiKey`, `index`, `environment`, `projectId`, `region`
+- SSL/TLS, connection pool settings
+
+**Search** (`IVectorStoreSearchConfig`):
+- `topK`, `minScore`, `searchType` (vector / semantic / hybrid / keyword)
+- `similarityMetric` (cosine / euclidean / dotProduct / l2)
+- Metadata filters, namespace filters
+- Reranking support (`enableReranking`, `rerankingModel`)
+- Query expansion (`enableQueryExpansion`, `expansionPrompt`)
+- Hybrid weights (`keywordWeight`, `vectorWeight`)
+
+**Embedding** (optional):
+- `modelEndpointId` — FK to AI model endpoint for query vectorization
+- `embeddingDimensions`, `batchSize`
+
+See [Vector Store Quick Reference](/docs/vector-store-quick-reference.md) and [Provider Template](/docs/vector-store-provider-template.md) for detailed setup.

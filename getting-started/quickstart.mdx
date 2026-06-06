@@ -1,0 +1,68 @@
+---
+title: "Quick Start"
+description: "Run Findable locally with Node.js, Cosmos DB, and Azure Entra ID."
+---
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) ≥20
+- npm ≥10
+- [Azure Cosmos DB](https://portal.azure.com/#browse/Microsoft.DocumentDb%2FdatabaseAccounts) account
+- [Azure Entra ID](https://entra.microsoft.com/) app registration (for authentication)
+
+### Environment Setup (Local Development Only)
+
+> **Note:** The `.env` file is **only used for local development**. In production, all configuration is done through **Azure App Service → Configuration → Application Settings**. Do not deploy a `.env` file to production.
+
+Copy `.env.example` to `.env` in the project root and fill in your Cosmos DB values. See [Setup Wizard → Prerequisites](/getting-started/prerequisites) for the full variable reference.
+
+```env
+LOG_LEVEL=debug
+AZURE_COSMOS_AUTH_TYPE=apiKey
+AZURE_COSMOS_ENDPOINT=https://your-cosmos-account.documents.azure.com:443
+AZURE_COSMOS_KEY=your-cosmos-key
+AZURE_COSMOS_DB=your-database-name
+```
+
+These Cosmos DB variables are the only environment-level configuration required. All other application settings (AI endpoints, search config, auth, features, etc.) are stored in **Cosmos DB** and managed through the **Admin UI** or the **Setup Wizard**.
+
+### Installation
+
+```sh
+# Install all dependencies (uses npm workspaces)
+npm install
+
+# Build the shared module
+npm run build:shared
+```
+
+### Development
+
+**Terminal 1 - Start the server:**
+```sh
+npm run dev
+```
+Server runs at https://localhost:3000
+
+**Terminal 2 - Start the client:**
+```sh
+cd client && npm run dev
+```
+Client runs at https://localhost:3001
+
+**Open the application:** Navigate to https://localhost:3001
+
+> ⚠️ **Important:** Always use `https://localhost:3001` for development. Random ports will break MSAL authentication redirects.
+
+### Local HTTPS Certificates
+
+Generate self-signed certificates for local HTTPS:
+
+```sh
+mkdir -p certs
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout certs/localhost-key.pem \
+  -out certs/localhost.pem \
+  -days 720 \
+  -subj "/CN=localhost"
+```

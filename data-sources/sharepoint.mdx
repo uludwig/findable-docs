@@ -1,0 +1,80 @@
+---
+title: "SharePoint Integration"
+description: "Index and search SharePoint Online document libraries, with optional document-level ACL."
+---
+
+Findable can index and search SharePoint Online document libraries, making corporate documents available for RAG-powered conversations.
+
+### Setup Overview
+
+1. **Create a SharePoint app registration** — See [Azure App Registration → SharePoint](/access-identity/azure-app-registration)
+2. **Configure credentials** — In **Admin → SharePoint Connection** ([`#/admin/sharepointconn`]), enter the `sharePointClientId` and `sharePointClientSecret` (or enable managed identity)
+3. **Browse and select libraries** — The admin UI lets you browse SharePoint sites, select document libraries, and create data sources
+4. **Indexing pipeline** — For each selected library, Findable automatically creates an Azure AI Search data source, index, skillset, and indexer
+
+### Data Source Naming
+
+SharePoint data source names are derived from the library URL with sanitization:
+- Leading slashes removed
+- Dashes preserved as `--`
+- URL-encoded spaces (`%20`) become `-x0020-`
+- Path separators become `-`
+- All lowercase
+
+### Authentication Modes
+
+| Mode | Setting | Use Case |
+|------|---------|----------|
+| Client credentials | `sharePointClientId` + `sharePointClientSecret` | Standard setup |
+| Managed identity | `sharePointAuthType=managedSystemIdentity` | Production with MSI |
+
+### Multi-Library Support
+
+Chats can index an entire SharePoint site (`sharePointIndexEntireSite: true`) or select specific libraries (`sharePointLibraries[]`). Each library gets its own indexer and data source.
+
+### Document-Level ACL
+
+SharePoint (and OneDrive) indexes always include `UserIds` and `GroupIds` fields in the schema. These fields are harmless when empty and ensure the skillset index projections always match, regardless of whether ACL is enabled.
+
+ACL is controlled by **three independent toggles**:
+
+| Toggle | Layer | What It Controls |
+|--------|-------|------------------|
+| `enableAcl` | Data source / indexer | Whether the SharePoint indexer ingests ACL metadata (`metadata_user_ids`, `metadata_group_ids`) and maps them to the index. When disabled, `indexerPermissionOptions` and ACL field mappings are removed — the fields exist but remain empty. |
+| `enableAclFiltering` | Per chat / data source | Whether ACL filters are applied at query time. When disabled, queries return all documents regardless of `UserIds`/`GroupIds` values. |
+| `azureSearchToken` | Request header | The user's Azure Search `user_impersonation` token. Only passed when `enableAclFiltering` is true. Enables native Azure Search permission filtering via `x-ms-query-source-authorization`. |
+
+**When ACL is fully enabled:**
+
+1. The data source ingests user/group permissions from SharePoint
+2. The index includes `permissionFilterOption: "enabled"` and `permissionFilter` on the ACL fields
+3. The client acquires an Azure Search `user_impersonation` token
+4. Search queries pass the user's identity for permission filtering
+5. Only documents the user has access to in SharePoint are returned
+
+**When ACL is disabled (default):**
+
+1. `UserIds` and `GroupIds` fields exist in the index but are empty
+2. No `permissionFilterOption` or `permissionFilter` metadata on the index
+3. No ACL filter is applied at query time — all documents are returned
+4. Even if `enableAclFiltering` were toggled on against a non-ACL index, the ACL filter includes a public content clause (`not UserIds/any() and not GroupIds/any()`) that matches all documents with empty ACL fields, so queries still return results
+
+> **Upgrade note:** If upgrading from a version that conditionally excluded `UserIds`/`GroupIds` from the index schema, delete all SharePoint search assets (indexes, indexers, skillsets, and data sources) and visit the chat to trigger a rebuild.
+
+### SharePoint Entitlement Administration
+
+For `Sites.Selected` permission mode, use **Admin → SharePoint Entitlement** ([`#/admin/sharepointentitlement`], setting key `sharePointEntitlement`) to grant the SharePoint app access to specific sites. This requires a separate admin client ID (`sharePointAdminClientId`) with `Sites.FullControl.All` permission.
+
+See [Azure App Registration → SharePoint](/access-identity/azure-app-registration) for full permission details.
+
+### SharePoint Data Source Fields
+
+When `type === 'sharepoint'` in `IDataSourceConfig`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sharePointSite` | `ISharePointSite?` | Selected SharePoint site |
+| `sharePointLibrary` | `ISharePointLibrary?` | Single library (legacy) |
+| `sharePointLibraries` | `ISharePointLibrary[]?` | Multiple libraries selection |
+| `sharePointIndexEntireSite` | `boolean?` | When true, index all libraries in the selected site |
+| `sharePointFolder` | `ISharePointFolder?` | Subfolder within library for path filtering |

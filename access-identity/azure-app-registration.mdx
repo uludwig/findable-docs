@@ -1,0 +1,197 @@
+---
+title: "Azure App Registration & Permissions"
+description: "Up to four Azure app registrations: Client SPA, Server, SharePoint, and Azure Search ACL. Required and optional permissions for each."
+---
+
+Findable uses up to **four** Azure identity surfaces. Each has its own app registration and permission set. Only the Client and Server registrations are required — SharePoint and Azure Search ACL are optional depending on which features you enable.
+
+> **Tip:** The **Admin → Health** page ([`#/admin/about`], setting key `health.label`) shows real-time status for every permission listed below.
+
+---
+
+### 1. Client App Registration (`clientId`)
+
+This is the **frontend SPA** that users sign into. Configured in the setup wizard (Step 1) and stored as `clientId` in settings.
+
+**[Azure Portal → App Registrations](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) → Client App**
+
+| Section | Configuration |
+|---------|---------------|
+| **Authentication** | Add redirect URI: `https://your-app-url` (or `https://localhost:3001` for dev). Enable **ID tokens**. Set SPA platform. |
+| **API Permissions** | See table below |
+
+**Delegated Permissions (Microsoft Graph):**
+
+| Permission | Type | Required | Purpose |
+|-----------|------|----------|---------|
+| `User.Read` | Delegated | ✅ Yes | Sign-in and read own profile |
+| `Group.Read.All` | Delegated | ✅ Yes | Read group membership for RBAC |
+| `User.Read.All` | Delegated | Recommended | People picker, user search, directory lookups |
+| `Directory.Read.All` | Delegated | Fallback | Alternative to `User.Read.All` + `Group.Read.All` (broader, noisier) |
+| `Files.ReadWrite` | Delegated | Optional | Client-side OneDrive file uploads (drag-and-drop attachment) |
+| `Sites.Read.All` | Delegated | Optional | SharePoint document library browsing |
+| `Sites.Selected` | Delegated | Optional | Alternative to `Sites.Read.All` for restricted site access |
+
+**Scope acquisition order** (client falls back automatically):
+1. `User.Read` + `Group.Read.All` + `User.Read.All` (full)
+2. `User.Read` + `Group.Read.All` (groups only — fallback)
+3. `User.Read` + `Directory.Read.All` (last resort)
+4. `User.Read` only (guest users)
+
+---
+
+### 2. Server App Registration (`graphClientId`)
+
+This is the **backend server** identity used for server-side Graph API calls. Configured in the setup wizard (Step 2) and stored as `graphClientId` / `graphClientSecret` in settings.
+
+**[Azure Portal → App Registrations](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) → Server App**
+
+| Section | Configuration |
+|---------|---------------|
+| **Expose an API** | Set Application ID URI: `api://{graphClientId}`. Add scope: `User.Read` (admin consent). |
+| **Certificates & Secrets** | Create a client secret → store as `graphClientSecret`. |
+| **API Permissions** | See tables below |
+
+**Application Permissions (Microsoft Graph) — server-to-server, no user context:**
+
+The server uses these least-privilege application permissions. Grant only what the features you've enabled actually need.
+
+*Required — every authenticated request:*
+
+| Permission | Type | Required | Purpose |
+|-----------|------|----------|---------|
+| `User.ReadBasic.All` | Application | ✅ Yes | Resolve the signed-in user's email/UPN to an Entra `id` in `auth.middleware` (`getUserIdFromEmail`). Only `id` is selected, so the basic-profile scope is sufficient. |
+| `GroupMember.Read.All` | Application | ✅ Yes | Read the signed-in user's transitive group memberships for app-level RBAC (`getUserGroups` → `/users/{id}/transitiveMemberOf`). |
+
+*Conditional — only when the named feature is in use:*
+
+| Permission | Type | Required when | Purpose |
+|-----------|------|---------------|---------|
+| `User.Read.All` | Application | Flow Designer Entra tools (`entra_get_manager`, `entra_get_direct_reports`, `entra_search_users`, `entra_get_user`), the `/directory/direct-reports` route, the flow assignee resolver for user assignees, or server-side profile sync | Reads extended user properties (jobTitle, department, officeLocation, employeeId, mobilePhone, businessPhones, companyName) — these are not in the basic profile |
+| `Group.Read.All` | Application | Flow Designer assignee resolver resolving **group** assignees | `assigneeresolver.ts::resolveGroup` does `GET /groups/{id}`. `GroupMember.Read.All` does not authorize reading group properties. |
+| `Files.ReadWrite.All` | Application | `personalFileLocation = OneDrive` | List/read/upload/create-folder/delete in each user's OneDrive app folder for the indexer, OneDrive router, and purge job. `Files.Read.All` is insufficient — the indexer creates folders and the purge job deletes items. See [OneDrive Personal Files Setup](/data-sources/onedrive). |
+| `Organization.Read.All` | Application | Optional | Look up tenant display name in `settingsservice` (`GET /organization`). Wrapped in try/catch and tagged non-critical; satisfied transitively by `User.Read.All` or `Directory.Read.All`. |
+
+*Broad-fallback (over-privileged, not recommended):*
+
+| Permission | Type | Notes |
+|-----------|------|-------|
+| `Directory.Read.All` | Application | Single permission that covers all of the above (user reads, group memberships, group properties, organization). Convenient but grants more than the server needs — prefer the least-privilege pair. |
+
+> Grant admin consent for all application permissions after adding them. The runtime check at **Admin → Health** passes if `Directory.Read.All` is present **OR** one of `{User.ReadBasic.All, User.Read.All}` AND one of `{GroupMember.Read.All, Group.Read.All}` are both present.
+
+**Delegated Permissions (Microsoft Graph) — OBO flow, user context:**
+
+These permissions are used by the On-Behalf-Of (OBO) flow when Exchange Online or OneDrive tools execute as the authenticated user. Each must be individually enabled in **Admin → Delegated Permissions** ([`#/admin/delegated`], setting key `adminNav.delegatedPermissions`) after granting consent.
+
+| Permission | Type | Admin Setting | Purpose |
+|-----------|------|---------------|---------|
+| `Mail.Read` | Delegated | `enableDelegatedGraphMailRead` | Read user's email (Exchange) |
+| `Mail.Send` | Delegated | `enableDelegatedGraphMailSend` | Send email as user (Exchange) |
+| `Calendars.Read` | Delegated | `enableDelegatedGraphCalendarRead` | Read user's calendar (Exchange) |
+| `Calendars.ReadWrite` | Delegated | `enableDelegatedGraphCalendarWrite` | Create calendar events as user (Exchange) |
+| `MailboxSettings.Read` | Delegated | `enableDelegatedGraphMailboxSettings` | Read out-of-office status (Exchange) |
+| `Files.Read` | Delegated | `enableDelegatedGraphFilesRead` | Read user's OneDrive files |
+| `Files.ReadWrite` | Delegated | `enableDelegatedGraphFilesReadWrite` | Upload/create/share OneDrive files |
+
+**OBO setup steps:**
+1. Add the delegated permissions above to the **server app** (not the client app)
+2. Click **"Grant admin consent for [tenant]"**
+3. Enable each scope in **Admin → Delegated Permissions** ([`#/admin/delegated`])
+4. Ensure `graphClientId` and `graphClientSecret` are configured (OBO does **not** work with managed identity)
+
+**Security note:** All OBO Graph calls use `/me/` endpoints — users can only access their own mailbox, calendar, and OneDrive. Cross-user access is not possible regardless of input parameters.
+
+**Authentication modes:**
+
+| Mode | Env/Setting | OBO Support | Use Case |
+|------|-------------|-------------|----------|
+| Client credentials | `graphClientId` + `graphClientSecret` | ✅ Yes | Full functionality including delegated tools |
+| Managed identity | `graphAuthType=managedSystemIdentity` | ❌ No | Server-only Graph calls; Exchange/OneDrive tools unavailable |
+
+---
+
+### 3. SharePoint App Registration (`sharePointClientId`) — Optional
+
+A **separate** app registration used for SharePoint document library indexing. Only needed if you use the SharePoint integration.
+
+**[Azure Portal → App Registrations](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) → SharePoint App**
+
+| Section | Configuration |
+|---------|---------------|
+| **Certificates & Secrets** | Create a client secret → store as `sharePointClientSecret`. |
+| **API Permissions** | See table below |
+
+**Application Permissions (Microsoft Graph):**
+
+| Permission | Type | Required | Purpose |
+|-----------|------|----------|---------|
+| `Sites.Read.All` | Application | One of these | Read all SharePoint sites and document libraries |
+| `Sites.Selected` | Application | One of these | Read only specific sites (more restrictive, recommended) |
+
+> If using `Sites.Selected`, you must grant the app access to each site individually using the SharePoint Entitlement page in Admin or the `Grant-PnPAzureADAppSitePermission` PowerShell command.
+
+**SharePoint Entitlement Administration:**
+
+The admin UI uses a separate `sharePointAdminClientId` + API key to grant `Sites.Selected` permissions to sites. This admin identity needs:
+
+| Permission | Type | Purpose |
+|-----------|------|---------|
+| `Sites.FullControl.All` | Application | Grant site-level permissions to the SharePoint app |
+
+**Authentication modes:**
+
+| Mode | Env/Setting | Use Case |
+|------|-------------|----------|
+| Client credentials | `sharePointClientId` + `sharePointClientSecret` | Standard setup |
+| Managed identity | `sharePointAuthType=managedSystemIdentity` | Production with MSI |
+
+---
+
+### 4. Azure Search ACL (Document-Level Security) — Optional
+
+When enabled, Azure AI Search queries pass the user's identity token so that search results are filtered based on document-level access control lists (ACLs). This is used with SharePoint-indexed content where documents inherit SharePoint permissions.
+
+**Client App Registration → API Permissions:**
+
+| Permission | Type | Required | Purpose |
+|-----------|------|----------|---------|
+| `https://search.azure.com/user_impersonation` | Delegated | ✅ When ACL enabled | Pass user identity to Azure Search for permission filtering |
+
+**Setup steps:**
+1. In the **client app** registration, add API permission: **Azure Search** → `user_impersonation` (Delegated)
+2. Grant admin consent
+3. Enable in **Admin → Delegated Permissions** ([`#/admin/delegated`]) → **Enable Document-Level ACL**
+
+> When ACL is enabled, the client acquires an additional token scoped to `https://search.azure.com/user_impersonation` and sends it alongside search requests.
+
+---
+
+### Quick Reference: Settings ↔ App Registration Mapping
+
+| Setting | Source | App Registration |
+|---------|--------|-----------------|
+| `clientId` | Setup Wizard Step 1 | Client (SPA) |
+| `tenantId` | Setup Wizard Step 1 | Shared across all |
+| `graphClientId` | Setup Wizard Step 2 | Server |
+| `graphClientSecret` | Setup Wizard Step 2 | Server |
+| `graphAuthType` | Admin → Server Security (Graph) ([`#/admin/graphsecurity`]) | Server auth mode |
+| `sharePointClientId` | Admin → SharePoint Connection ([`#/admin/sharepointconn`]) | SharePoint |
+| `sharePointClientSecret` | Admin → SharePoint Connection ([`#/admin/sharepointconn`]) | SharePoint |
+| `sharePointAdminClientId` | Admin → SharePoint Entitlement ([`#/admin/sharepointentitlement`]) | SharePoint Admin |
+| `enableAzureSearchAcl` | Admin → Delegated Permissions ([`#/admin/delegated`]) | Client + Azure Search |
+
+### Environment Variable Overrides
+
+The settings above are normally configured through the Setup Wizard or Admin UI and stored in Cosmos DB. However, they can also be set as **Azure App Service Application Settings** (or environment variables for local development). Environment variables take precedence over Cosmos DB values when present.
+
+```env
+TENANT_ID=your-tenant-id
+GRAPH_CLIENT_ID=your-server-app-client-id
+GRAPH_CLIENT_SECRET=your-server-app-secret
+GRAPH_AUTH_TYPE=clientCredentials           # or managedSystemIdentity
+SHAREPOINT_CLIENT_ID=your-sp-app-id
+SHAREPOINT_CLIENT_SECRET=your-sp-app-secret
+```
+
+> **Reminder:** In production, set these in **Azure App Service → Configuration → Application Settings**. Do not use a `.env` file in production deployments.

@@ -1,0 +1,147 @@
+---
+title: "Flow Designer"
+description: "Visual drag-and-drop editor for building multi-step AI agent workflows with nodes, edges, and conditional branching."
+---
+
+The Flow Designer is a visual drag-and-drop editor for building multi-step AI agent workflows. Flows define a graph of nodes connected by edges, where each node performs a specific operation.
+
+### Node Types
+
+| Node Type | Enum | Description |
+|-----------|------|-------------|
+| **Start** | `start` | Entry point — defines input variables and initial configuration |
+| **Agent** | `agent` | Autonomous ReAct agent with system prompt, tools, and iteration control |
+| **LLM** | `llm` | Direct LLM call with configurable model, temperature, and token limits |
+| **Tool** | `tool` | Execute a tool from the registry, REST API, GraphQL, webhook, or custom function |
+| **MCP Server** | `mcpServer` | Connect to an MCP server and invoke its tools |
+| **Form Prompt** | `formPrompt` | Present a form to users and wait for response (replaces deprecated `human`, `prompt`, `dynamicForm`) |
+| **Conditional** | `conditional` | Branch execution based on expression evaluation |
+| **Retriever** | `retriever` | RAG retrieval from Azure AI Search (semantic, vector, or hybrid) |
+| **Memory** | `memory` | Read/write to Mem0 memory stores |
+| **Message** | `message` | Send notifications via email, Teams, Slack, or in-app without pausing the flow |
+| **Content** | `content` | Stream rich markdown content, present inline button choices (static or AI-generated), and/or enter scoped AI chat |
+| **End** | `end` | Terminal node — flow execution completes |
+
+### Agent Nodes
+
+Agent nodes implement the **ReAct** (Reasoning + Acting) pattern:
+
+1. The agent receives a system prompt and user input
+2. It reasons about what to do next
+3. It calls tools as needed (web search, database queries, MCP tools, etc.)
+4. It iterates until it has a final answer or hits `maxIterations`
+
+Agent configuration includes:
+- **System prompt** — Instructions and personality
+- **Tools** — Array of tool IDs from the tools registry
+- **LLM config** — Model endpoint, temperature, max tokens
+- **Strategy** — `react` (default), `plan_and_execute`, `direct`, or `tool_calling`
+- **Memory type** — `buffer`, `summary`, or `conversation`
+
+### Form Prompt Nodes (Human-in-the-Loop)
+
+The unified Form Prompt node supports three modes:
+
+| Mode | Description |
+|------|-------------|
+| **Template** | References an existing prompt template from the Prompt Library |
+| **Custom** | Inline content with `{{variable\|type}}` syntax — same editor as the Prompt Library |
+| **Dynamic** | AI generates the form fields at runtime from instructions + inbound flow variables |
+
+All modes support:
+- **Assignee configuration** — Static users/groups or dynamic from flow variables
+- **Assignee strategy** — `any` (first response wins) or `all` (wait for everyone)
+- **External notifications** — Email, Teams, Slack delivery
+- **Timeout** — Auto-expire after configured duration
+- **Response caching** — `rememberResponse` prevents re-prompting across round trips
+
+### Tool Nodes
+
+Tool nodes support multiple integration types:
+
+| Integration | Description |
+|-------------|-------------|
+| **Registry** | Use a built-in or registered tool from the Tools Registry |
+| **REST API** | Call any HTTP endpoint with headers, auth, and body templates |
+| **GraphQL** | Execute GraphQL queries/mutations |
+| **Webhook** | Invoke a webhook URL |
+| **Function** | Run custom JavaScript code in a sandboxed `vm` (5s timeout) |
+| **Vector Store** | Query external vector stores (Pinecone, Qdrant, Weaviate, etc.) |
+
+Tool nodes include retry policies, timeout configuration, input/output schema validation, and error handling strategies (`throw`, `return_null`, `return_default`).
+
+### Conditional Nodes
+
+Conditional nodes evaluate expressions against flow variables and route execution to different branches. Each condition specifies an expression, and a `defaultTargetNodeId` handles the fallback case.
+
+### Message Nodes
+
+Message nodes send notifications without pausing the flow (unlike Form Prompt nodes which wait for a response). They support:
+- **In-app notifications** (bell icon)
+- **External channels** — Email, Slack, Teams, Twilio, Webhook
+- **Template variables** — `{{variable}}` syntax in subject, body, and recipient
+- **Importance levels** — `low`, `normal`, `high`
+- **Body types** — `text`, `html`, or `markdown` (auto-converted to HTML for email)
+- **Notification provider preferences** — Route through preferred channels per recipient
+
+### Content Nodes
+
+Content nodes stream rich markdown to the user and optionally pause for interaction. They support three capabilities (combinable):
+
+| Capability | Description |
+|------------|-------------|
+| **Markdown content** | Stream rendered markdown as an assistant message via `content` field |
+| **Inline buttons** | Present static button choices via `buttons[]` or AI-generated buttons via `aiButtons` |
+| **Scoped AI chat** | Open a focused AI chat session with a custom system prompt and optional RAG, pausing the flow until the user clicks "Continue" |
+
+Content node configuration:
+- **`content`** — Markdown template with `{{variable}}` substitution
+- **`buttons`** — Static string array of button labels (user selects one)
+- **`aiButtons`** — AI-generated buttons: `{ prompt, count?, fallbackButtons?, modelEndpointId? }`
+- **`scopedChat`** — Scoped AI chat: `{ systemPrompt, topicLabel, useRag? }`
+
+When buttons are present, the flow pauses until the user selects an option. The selected value is stored in the execution context under the node's output key.
+
+### AI Flow Generator
+
+The Flow Designer includes an **AI-powered flow generator** that creates complete flow definitions from natural language descriptions. Users describe what they want the flow to do, and the AI generates all nodes, edges, and configuration.
+
+**How it works:**
+1. User opens the "Generate with AI" dialog from the Flow Designer
+2. Provides a natural language description and selects a complexity level (`simple`, `moderate`, `advanced`)
+3. The server builds a system prompt with all available node types, configurations, layout rules, and the current tool catalog
+4. An LLM generates a valid JSON flow definition
+5. The flow is auto-validated and auto-fixed (edge IDs, missing end nodes, position adjustments)
+6. On success, the flow is saved and the user is navigated to the flow editor
+
+**Supported node types in generation:** All 13 node types are documented in the prompt — `start`, `end`, `prompt`, `llm`, `formPrompt`, `tool`, `mcpServer`, `agent`, `conditional`, `retriever`, `memory`, `message`, `content`.
+
+**Key features:**
+- **Tool catalog awareness** — The prompt includes all registered tools with their IDs, parameters, and output schemas
+- **Variable reference syntax** — Generated flows use `{{node_label.field}}` syntax for inter-node data flow
+- **Layout positioning** — Nodes are positioned vertically with proper spacing and branch offsets
+- **Complexity scaling** — Simple (4-8 nodes), moderate (8-12 nodes), advanced (up to 15 nodes)
+
+### Flow Execution
+
+Flows execute via the flow orchestrator with:
+- **SSE streaming** — Real-time streaming of agent reasoning steps and tool outputs
+- **Tool activity tracking** — Each tool call is tracked with name, status, duration, and summary
+- **Error handling** — Configurable per-flow: `stop`, `continue`, or `retry`
+- **Execution context** — Variables flow between nodes via a shared execution context
+- **Chat integration** — Flows are attached to chats via `flowEngineFlowId` and `flowEngineEnabled`
+
+### Flow Types
+
+Flows have a `flowType` field that classifies their execution mode:
+
+| Flow Type | Enum Value | Description |
+|-----------|-----------|-------------|
+| **General** | `general` | Standard interactive flows — may include Form Prompt nodes, agent loops, and user interaction (default) |
+| **Retriever** | `retriever` | Headless flows — receive a query and return structured documents without user interaction |
+
+Retriever flows are used as virtual data sources by the **Flow Retriever** feature. See [Flow Retriever](/flow-designer/flow-retriever) for details.
+
+### Flow Groups
+
+Flows are organized into **flow groups** for navigation. Groups support ACL, inheritance, and scope (personal/shared) just like other entities.

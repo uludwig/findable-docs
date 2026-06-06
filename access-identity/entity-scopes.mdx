@@ -1,0 +1,178 @@
+---
+title: "Entity Scope Configuration"
+description: "Fine-grained control over which types of items users can create as personal vs shared across the organization."
+---
+
+Entity scopes give administrators fine-grained control over which types of items — chats, pages, prompts, prompt groups, flows, data connections, AI model endpoints, AI search endpoints, MCP servers, and tool providers — users can create and own personally versus which remain shared across the organization.
+
+### Why Entity Scopes Matter
+
+In a default installation, shared entities are managed by administrators and contributors through ACL-based permissions. Regular users can **read** shared prompts, chats, and pages, but they cannot create or edit them. This is the right model for organization-wide resources, but it means users have no way to build their own prompt libraries, draft personal chat configurations, or experiment with flows.
+
+**Entity scopes solve this** by letting administrators selectively grant **personal contribute access** to specific entity types. When personal scope is enabled for an entity type, any authenticated user can create their own private instances — visible only to them — without requiring an admin or contributor role. Users get a personal workspace for the entity types you choose, while shared resources remain centrally managed.
+
+**Common use case — personal prompts:** Out of the box, Findable enables personal scope for **prompt templates** and **prompt groups**. This means every user can build and organize their own prompt library while the shared prompt library stays under admin control. No role elevation is needed — any authenticated user can create personal prompts immediately.
+
+### Default Configuration
+
+New installations ship with the following defaults:
+
+| Entity Type | Personal | Shared | Public |
+|-------------|----------|--------|--------|
+| **Chats** | ✗ | ✓ | ✗ |
+| **Pages** | ✗ | ✓ | ✗ |
+| **Prompts** | ✓ *(override)* | ✓ | ✗ |
+| **Prompt Groups** | ✓ *(override)* | ✓ | ✗ |
+| **Flows** | ✗ | ✓ | ✗ |
+| **Flow Groups** | ✗ | ✓ | ✗ |
+| **Connections** | ✗ | ✓ | ✗ |
+| **AI Model Endpoints** | ✗ | ✓ | ✗ |
+| **AI Search Endpoints** | ✗ | ✓ | ✗ |
+| **MCP Servers** | ✗ | ✓ | ✗ |
+| **Tool Providers** | ✗ | ✓ | ✗ |
+
+Personal scope is **off globally** but **overridden to on** for prompts and prompt groups. Administrators can adjust this for any entity type through the admin UI or directly in Cosmos DB.
+
+### Admin UI
+
+**Admin → Advanced** ([`#/admin/security`]) **→ Entity Scopes** tab, or navigate directly to **Admin → Entity Scopes** ([`#/admin/scopes`], setting key `adminNav.entityScopes`)
+
+The Entity Scopes card provides two levels of control:
+
+#### Global Defaults
+
+Three toggles set the baseline for all entity types:
+
+| Toggle | Effect |
+|--------|--------|
+| **Enable Personal Scope** | Users can create personal-scoped entities. The scope selector appears on entity editors. |
+| **Enable Shared Scope** | Users can create shared entities (with appropriate roles). Enabled by default. |
+| **Enable Public Access** | Creators can mark entities as publicly readable by all authenticated users. |
+
+#### Per-Entity-Type Overrides
+
+Below the global toggles, a table lists every entity type with checkboxes for Personal, Shared, and Public. Each cell shows the effective value (global default merged with any override):
+
+- **Greyed checkbox** — inheriting from the global default; no override set.
+- **Colored checkbox with "override" chip** — an explicit override is active for this entity type. Click the ✕ on the chip to remove the override and revert to the global default.
+- **Clicking a checkbox** cycles through: set override to opposite of default → set override to match default → remove override (inherit).
+
+This lets administrators make targeted adjustments — for example, enabling personal scope only for prompts and prompt groups — without changing the global setting that applies to chats, pages, and everything else.
+
+### Cosmos DB Configuration
+
+For automation or bulk configuration, edit the settings document directly in **Cosmos DB Data Explorer**. The two relevant fields are `defaultEntityScopeConfig` (global baseline) and `entityScopeOverrides` (per-entity-type overrides).
+
+#### Personal scope for prompts and prompt groups only (default)
+
+```json
+{
+  "id": "default",
+  "defaultEntityScopeConfig": {
+    "allowPersonal": false,
+    "allowShared": true,
+    "allowPublic": false
+  },
+  "entityScopeOverrides": {
+    "prompt": { "allowPersonal": true },
+    "group": { "allowPersonal": true }
+  }
+}
+```
+
+#### Enable personal scope globally
+
+```json
+{
+  "id": "default",
+  "defaultEntityScopeConfig": {
+    "allowPersonal": true,
+    "allowShared": true,
+    "allowPublic": false
+  }
+}
+```
+
+#### Enable personal scope with public access
+
+```json
+{
+  "id": "default",
+  "defaultEntityScopeConfig": {
+    "allowPersonal": true,
+    "allowShared": true,
+    "allowPublic": true
+  }
+}
+```
+
+#### Selective overrides for multiple entity types
+
+Only the fields you specify are overridden — everything else falls back to `defaultEntityScopeConfig`.
+
+```json
+{
+  "id": "default",
+  "defaultEntityScopeConfig": {
+    "allowPersonal": false,
+    "allowShared": true,
+    "allowPublic": false
+  },
+  "entityScopeOverrides": {
+    "prompt": { "allowPersonal": true },
+    "group": { "allowPersonal": true },
+    "flow": { "allowPersonal": true },
+    "chat": { "allowPersonal": true, "allowPublic": true }
+  }
+}
+```
+
+The example above allows personal prompts, prompt groups, and flows, plus personal chats with public sharing — while keeping pages, connections, and infrastructure endpoints shared-only.
+
+#### Valid entity type keys
+
+| Key | Entity |
+|-----|--------|
+| `prompt` | Prompt templates |
+| `group` | Prompt groups |
+| `flow` | Flows |
+| `flowGroup` | Flow groups |
+| `page` | Navigation pages |
+| `chat` | Chats |
+| `connection` | Data platform connections |
+| `aiModelEndpoint` | AI model endpoints |
+| `aiSearchEndpoint` | AI search endpoints |
+| `mcpServer` | MCP servers |
+| `aiToolProvider` | Tool providers |
+| `generic` | Generic / catch-all (legacy) |
+
+### Public Access (`isPublic`)
+
+When **Enable Public Access** is turned on (or `allowPublic: true` in config), entity editors display a **Public Access** toggle. Setting `isPublic: true` on an entity grants **read-only access to all authenticated users** in the organization, regardless of ACL membership.
+
+**How it works:**
+
+- **Shared + public** — Any authenticated user can view the entity even if they are not listed in owners, contributors, or users. Owners and contributors retain full edit access.
+- **Personal + public** — The creator retains full ownership. All other authenticated users get read-only access (they can see the entity but cannot edit it).
+- **Write access** — `isPublic` never grants write access. Only owners and contributors can edit, and only owners can toggle `isPublic` on or off.
+
+**Server enforcement:** The entitlement service checks `isPublic` on every access request. Public entities appear in entity lists for all users with `user: true` (read-only) permission. The `checkEntityManagement` method correctly restricts edit operations to owners and contributors regardless of public status.
+
+**Supported entity types:** Chats, pages, prompts, prompt groups, flows, flow groups, and data connections all support `isPublic`. AI model endpoints, AI search endpoints, MCP servers, and tool providers do not expose the public toggle in their UI (`showPublic={false}`).
+
+### Scope Filtering Behavior
+
+When an entity is **Shared**, its selectors (e.g., flow selector, prompt template selector, MCP server selector) automatically filter out personal items. This prevents shared entities from depending on personal items that other users cannot access.
+
+- **Shared entity** → can only reference other **Shared** items
+- **Personal entity** → can reference both **Personal** and **Shared** items
+
+### Server-Side Enforcement
+
+Entity scope configuration is enforced on **both** the client and the server. Every entity creation (POST) and scope-change (PUT/PATCH) endpoint validates the requested scope against the resolved entity scope config before processing the request. If a scope is not allowed for the entity type, the server returns a **403** with a descriptive error message.
+
+This means even direct API calls (bypassing the UI) cannot create a personal entity for an entity type where `allowPersonal` is `false`, or vice versa. The validation uses the same `resolveEntityScopeConfig` function from `@findable/shared` that the client uses, ensuring consistency.
+
+### Recommendations
+
+> **⚠️ AI Model Endpoints, AI Search Endpoints, MCP Servers, and Tool Providers should always remain Shared.** These are infrastructure-level resources configured by administrators. Enabling personal scope for these entity types (`aiModelEndpoint`, `aiSearchEndpoint`, `mcpServer`, `aiToolProvider`) is not recommended — it creates configuration fragmentation and makes troubleshooting difficult. Use `entityScopeOverrides` to enable personal scope only for user-facing entity types like `prompt`, `group`, `flow`, and `chat`.

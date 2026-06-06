@@ -1,0 +1,23 @@
+---
+title: "Model API Versions"
+description: "Azure AI Model Inference API versions, deployment endpoint differences, and embedding endpoints."
+---
+
+### Azure AI Model Inference API
+
+Azure AI uses the **Azure AI Model Inference API** exclusively. Legacy Azure OpenAI deployment endpoints (`/openai/deployments/{name}?api-version=XXX`) are no longer supported.
+
+| API Version | Endpoint Format | Usage |
+|-------------|----------------|-------|
+| **v1** (default) | `{endpoint}/openai/v1` | Stable — model specified in the request body |
+| **preview** | `{endpoint}/openai/v1?api-version=preview` | Preview features — model specified in the request body |
+
+Key differences from the legacy Azure OpenAI format:
+- **Model in body** — The model/deployment name is sent in the request body (`model` field), not in the URL path
+- **No deployment URLs** — No `/openai/deployments/{name}` paths
+- **No dated versions** — No `2024-10-21` or `2025-04-01-preview` style version strings
+- **Authentication** — Uses `api-key` header (API key) or `Authorization: Bearer` (Managed Identity), same as before
+
+### Embeddings
+
+Text embedding models use `AzureOpenAIEmbeddings` from `@langchain/openai`, which still requires a dated API version (e.g., `2024-06-01`) for the Azure OpenAI Embeddings API. This is configured per embedding endpoint in **Admin → AI Search Endpoints** ([`#/admin/search`]).

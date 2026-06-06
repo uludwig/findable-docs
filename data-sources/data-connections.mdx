@@ -1,0 +1,108 @@
+---
+title: "Data Connections (Natural Language SQL)"
+description: "Configure SQL and vector store connections so users can query databases conversationally."
+---
+
+Findable supports **Natural Language SQL** — users ask questions in plain English and the AI generates and executes SQL queries against configured database connections.
+
+All connections are managed through the unified `IDataConnection` interface (`DataPlatformType`), which supports both SQL databases and vector stores. Connections are stored in the `dataconnections` Cosmos container with full ACL support.
+
+### Supported Databases
+
+| Database | `DataPlatformType` | Adapter | Notes |
+|----------|-------------------|---------|-------|
+| **[PostgreSQL](https://www.postgresql.org/)** | `postgres` | `pg` | Including Azure Database for PostgreSQL |
+| **[SQL Server](https://learn.microsoft.com/en-us/sql/sql-server/)** | `mssql` | `mssql` | Including Azure SQL Database |
+| **[MySQL](https://dev.mysql.com/)** | `mysql` | `mysql2` | Including Azure Database for MySQL |
+| **[Oracle](https://www.oracle.com/database/)** | `oracle` | `oracledb` | Oracle Database 12c+ |
+| **[Snowflake](https://app.snowflake.com/)** | `snowflake` | `snowflake-sdk` | Cloud data warehouse |
+| **[BigQuery](https://console.cloud.google.com/bigquery)** | `bigquery` | `@google-cloud/bigquery` | Google Cloud analytics |
+| **[Amazon Athena](https://console.aws.amazon.com/athena/)** | `athena` | `@aws-sdk/client-athena` | Serverless query service |
+| **[ClickHouse](https://clickhouse.cloud/)** | `clickhouse` | `@clickhouse/client` | Column-oriented OLAP |
+| **[IBM DB2](https://www.ibm.com/db2)** | `db2` | `ibm_db` | Enterprise database (see [DB2 Guide](/docs/db2-support.md)) |
+| **[Azure Cosmos DB](https://portal.azure.com/#browse/Microsoft.DocumentDB%2FdatabaseAccounts)** | `cosmosdb` | `@azure/cosmos` | NoSQL document database |
+| **[Databricks](https://www.databricks.com/)** | `databricks` | `databricks-sql` | Lakehouse / SQL warehouse |
+| **[Trino](https://trino.io/)** | `trino` | `trino-client` | Distributed SQL query engine |
+
+### Supported Vector Stores
+
+| Vector Store | `DataPlatformType` | Notes |
+|-------------|-------------------|-------|
+| **[Pinecone](https://app.pinecone.io/)** | `pinecone` | Managed vector database |
+| **[Weaviate](https://weaviate.io/)** | `weaviate` | Open-source vector database |
+| **[Qdrant](https://qdrant.tech/)** | `qdrant` | High-performance similarity engine |
+| **[Chroma](https://www.trychroma.com/)** | `chroma` | Open-source embedding database |
+| **[Elasticsearch](https://www.elastic.co/elasticsearch)** | `elasticsearch` | Full-text + vector search |
+| **[OpenSearch](https://opensearch.org/)** | `opensearch` | AWS-managed search and analytics |
+| **[pgvector](https://github.com/pgvector/pgvector)** | `pgvector` | PostgreSQL vector extension |
+| **[Redis](https://redis.io/)** | `redis` | In-memory vector search |
+
+> Vector store connections are used by the **Vector Retriever** data source type and **Flow Designer** vector store tool nodes. See [Vector Store Integration](/data-sources/vector-store) for details.
+
+### Advanced Features
+
+| Feature | Description | How to Use |
+|---------|-------------|------------|
+| **Query Result Caching** | 5-minute cache for frequently asked questions | Automatic for identical questions on same connection |
+| **Query Explanation Mode** | Get an explanation of how a query would work without executing it | Use `explainNaturalLanguageQuery()` tool or pass `explain: true` |
+| **Multi-turn Context** | Follow-up questions reference previous queries in the same session | Pass `sessionId` parameter to maintain context |
+| **Cache Management** | Clear cache for a connection or all connections | Use `clearQueryCache(connectionId?)` tool |
+
+**Multi-turn Example:**
+```typescript
+// First question establishes context
+await executeNaturalLanguageQuery({
+  question: "What are our top 10 customers by revenue?",
+  connectionId: "...",
+  userId: "...",
+  sessionId: "session-123"  // Creates context
+});
+
+// Follow-up question uses context
+await executeNaturalLanguageQuery({
+  question: "Which of those are in California?",  // References "top 10 customers"
+  connectionId: "...",
+  userId: "...",
+  sessionId: "session-123"  // Uses same context
+});
+```
+
+### How It Works
+
+1. **Configure a connection** — In **Admin → Data Platform Connections** ([`#/admin/databases`], setting key `databaseConnections`), create a connection with host, port, credentials, and schema/catalog
+2. **Attach to a chat** — Select the connection on the chat configuration
+3. **Schema discovery** — The system introspects the database schema (tables, columns, types, relationships)
+4. **Query generation** — The AI receives the schema context and generates SQL from the user's natural language question
+5. **Execution** — The generated SQL is executed against the connection and results are formatted for display
+6. **Visualization** — Results can be rendered as tables or Recharts visualizations (bar, line, pie, area charts)
+
+### Security
+
+- **Read-only by default** — Connections are configured with read-only intent where possible
+- **Schema filtering** — Admins select which schemas/tables are visible to the AI
+- **API key auth** — Data Platform Tools use a separate API key (`sqlToolsApiKey`) for authentication
+- **Row limits** — Query results are capped to prevent excessive data transfer
+
+### Database SDK Versions
+
+| Database/Platform | NPM Package | Version |
+|-------------------|-------------|---------|
+| **Snowflake** | `snowflake-sdk` | `^2.4.2` |
+| **PostgreSQL** | `pg` | `^8.20.0` |
+| **MySQL** | `mysql2` | `^3.22.3` |
+| **SQL Server** | `mssql` | `^11.0.1` |
+| **Oracle** | `oracledb` | `^6.10.0` |
+| **ClickHouse** | `@clickhouse/client` | `^1.18.2` |
+| **BigQuery** | `@google-cloud/bigquery` | `^8.1.1` |
+| **Athena** | `@aws-sdk/client-athena` | `^3.1015.0` |
+
+### Recharts Visualizations
+
+When AI determines that query results are suitable for visualization, it can generate **Recharts** chart specifications inline in the chat response. Supported chart types:
+
+- **Bar charts** — Categorical comparisons
+- **Line charts** — Trends over time
+- **Pie charts** — Proportional data
+- **Area charts** — Filled line charts for volume data
+
+See [NL-SQL Quickstart](/docs/natural-language-sql-quickstart.md) and [Full Guide](/docs/natural-language-sql.md) for detailed setup.

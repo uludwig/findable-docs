@@ -1,0 +1,36 @@
+---
+title: "Capacity & Limits"
+description: "Concurrency guidelines, external service limits, and scaling recommendations for a single-process Node.js deployment."
+---
+
+Findable runs as a single-process Node.js server (via PM2). All chat and flow requests stream responses over SSE, holding one open HTTP connection per active session. There is no built-in request queue or concurrency limiter—every incoming request is forwarded immediately to the upstream AI provider.
+
+### Concurrency Guidelines
+
+| Workload | Recommended Concurrent Limit | Primary Bottleneck |
+|---|---|---|
+| Standard chats (single LLM call) | 20–100 | Azure OpenAI RPM/TPM quota |
+| ReAct agent flows (multi-iteration) | 5–20 | Each iteration is a separate LLM request; consumes RPM rapidly |
+| Simple linear flows | 10–30 | Similar to standard chats but with additional node execution overhead |
+| Flows with human-in-the-loop | 50–100 pending | In-memory broker; each pending request holds a Promise + timeout |
+| Open SSE connections | 1,000–5,000 | OS file descriptor limit (`ulimit`) |
+
+### External Service Limits
+
+| Service | Default Capacity | Notes |
+|---|---|---|
+| **Azure OpenAI** | Varies by deployment (e.g. 80K–450K TPM) | The dominant constraint; 429 errors trigger a streaming-to-invoke fallback but no retry queue |
+| **Azure Cosmos DB** | 400 RU/s (default) | Each read ≈ 1–5 RU; enable auto-scale for bursty workloads |
+| **Azure AI Search** | 15 QPS (Basic) to 200+ QPS (S3) | Tier-dependent; applies to RAG retrieval queries |
+| **Tool calls (HTTP)** | 30s timeout per call | Configured in the flow designer orchestrator |
+| **Custom function execution** | 5s timeout (default) | Sandboxed via Node.js `vm` module |
+
+### Scaling Recommendations
+
+- **PM2 cluster mode** — Set `instances: 'max'` in `ecosystem.config.js`. The human-input broker persists request state in the `humaninput` Cosmos DB container (partition key `/executionId`, per-item TTL) so it works correctly across multiple processes. A polling fallback (2 s interval) detects cross-instance responses.
+- **Concurrency limiter** — Add a semaphore (e.g. `p-limit`) before AI API calls to prevent flooding your Azure OpenAI quota.
+- **Multiple AI deployments** — Load-balance across Azure OpenAI deployments with separate RPM/TPM quotas.
+- **Cosmos DB auto-scale** — Enable auto-scale (up to 4,000+ RU/s) for production workloads.
+- **Azure AI Search tier** — Upgrade to S1+ for workloads exceeding 15 QPS.
+
+> **Rule of thumb:** For a typical team deployment, 20–50 concurrent active chats and 5–15 concurrent flows is a comfortable operating range without rate-limit pressure or degraded responsiveness.

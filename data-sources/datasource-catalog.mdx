@@ -1,0 +1,293 @@
+---
+title: "Datasource Catalog & Architecture"
+description: "Global registry of datasource definitions — built-in templates, admin connections, and the three-tier architecture from catalog to runtime config."
+---
+
+The **Datasource Catalog** is a global registry of all datasource definitions available in Findable. It lives in the `datasources` Cosmos DB container and serves as the single source of truth for what datasources exist and who can use them.
+
+### Three-Tier Architecture
+
+Datasources operate across three distinct tiers — from global definitions down to per-chat runtime configuration:
+
+```
+Tier 1 — DATASOURCE CATALOG (Cosmos: 'datasources')
+         Global registry of definitions.
+         ┌─────────────────────────┬─────────────────────────┐
+         │  origin: 'builtIn'      │  origin: 'admin'        │
+         │  System templates       │  Admin connections       │
+         │  • Locked fields        │  • Full CRUD             │
+         │  • No concrete index    │  • Has indexName          │
+         │  • Not deletable        │  • Has ACL               │
+         └────────────┬────────────┴────────────┬────────────┘
+                      │                         │
+                      │ datasourceId FK          │ datasourceId FK
+                      │ (provenance link)        │ (provenance + entitlement)
+                      ▼                         ▼
+Tier 2 — WORKSPACE SETTINGS (IAppSettings)
+         Controls which catalog entries are activated by default.
+         ┌────────────────────────────────────────────────────┐
+         │  workspaceDataSources[]:                           │
+         │    Default sources for workspace (personal) chats  │
+         │                                                    │
+         │  defaultChatDataSources[]:                         │
+         │    Default sources for new shared chats             │
+         │                                                    │
+         │  Each entry: { datasourceId, defaultEnabled,       │
+         │                allowUserToggle, sort, label }       │
+         └───────────────────────┬────────────────────────────┘
+                                 │
+                                 │ Populates on chat creation
+                                 ▼
+Tier 3 — CHAT dataSources[] (per-chat runtime config)
+         Concrete configuration for each chat.
+         ┌────────────────────────────────────────────────────┐
+         │  Each entry: IDataSourceConfig                     │
+         │  • datasourceId FK to catalog (provenance)         │
+         │  • type, enabled, allowUserToggle                  │
+         │  • indexName (concrete, once created)               │
+         │  • selectedFolder, searchEndpoint, flowId, etc.     │
+         └────────────────────────────────────────────────────┘
+```
+
+### Datasource Origin (`DataSourceOrigin`)
+
+Every catalog entry has an `origin` field that determines who created it and what rules apply:
+
+| Origin | Description | CRUD | Deletable | Locked Fields |
+|--------|-------------|------|-----------|---------------|
+| **`builtIn`** | System-bootstrapped templates and capabilities. Seeded at startup via `seedDatasources`. | Name, description, tags, ACL editable only | No | `type`, `origin`, `indexName`, `searchEndpoint`, connection fields |
+| **`admin`** | Admin-authored external connections (SharePoint, Flow Retriever, etc.). Created via the Datasources admin UI. | Full CRUD | Yes | None |
+
+This replaces the previous `builtIn: boolean` flag with a more expressive enum that supports future origin types.
+
+### Three Kinds of Datasources
+
+The catalog contains three conceptually different kinds of datasources, all represented as `IDataSource` entities:
+
+```
+Kind 1: VIRTUAL CAPABILITIES                     Kind 2: FILE STORAGE TEMPLATES
+(No infrastructure — purely virtual)              (Template → concrete on first upload)
+
+┌────────────────────────────┐                   ┌────────────────────────────┐
+│  LLM Knowledge             │                   │  Shared Files              │
+│  origin: builtIn           │                   │  origin: builtIn           │
+│  type: llmknowledge        │                   │  type: shared              │
+│  indexName: ∅              │                   │  indexName: ∅ (template)   │
+│                            │                   │                            │
+│  Web Search                │                   │  Personal Files            │
+│  origin: builtIn           │                   │  origin: builtIn           │
+│  type: websearch           │                   │  type: personal            │
+│  indexName: ∅              │                   │  indexName: ∅ (template)   │
+│                            │                   │                            │
+│  Flow Retriever            │                   │  Workspace                 │
+│  origin: builtIn           │                   │  origin: builtIn           │
+│  type: flowretriever       │                   │  type: workspace           │
+│  indexName: ∅              │                   │  indexName: ∅ (runtime)    │
+└────────────────────────────┘                   └────────────────────────────┘
+
+Kind 3: ADMIN EXTERNAL CONNECTIONS
+(Concrete from the start — pre-existing infrastructure)
+
+┌────────────────────────────┐
+│  "HR SharePoint"           │
+│  origin: admin             │
+│  type: sharepoint          │
+│  sharePointSite: { … }     │
+└────────────────────────────┘
+```
+
+### Datasource Lifecycle by Kind
+
+Each kind follows a different lifecycle from catalog definition through to runtime:
+
+**Kind 1 — Virtual (no infrastructure):**
+```
+Catalog (template) ──FK──→ Chat dataSources[] (enabled/disabled)
+                            No index. No infrastructure.
+                            LLM Knowledge = model's training data
+                            Web Search = live web results
+```
+
+**Kind 2 — File Storage (infrastructure created on demand):**
+```
+Catalog (template)  ──FK──→  Chat dataSources[]     ──upload──→  Azure Infrastructure
+origin: builtIn              indexName: ""                        Index: shared-my-project
+type: shared                 (virtual until upload)               Blob: Shared/My Project/
+                                     │                            Indexer, Skillset, etc.
+                                     │
+                                     └── indexName populated ──→  indexName: "shared-my-project"
+                                         after first upload        (stored on the chat)
+```
+
+For **Personal/Workspace** types, the index name is resolved at runtime from the user's UPN — it is never stored on the chat.
+
+**Kind 3 — Admin External (pre-existing infrastructure):**
+```
+Catalog (concrete)  ──FK──→  Chat dataSources[]
+origin: admin                Inherits indexName, searchEndpoint
+indexName: sales-2024        from catalog. ACL checked via
+searchEndpoint: https://…    entitlement service.
+```
+
+### Retrieval Pipeline
+
+The origin-based classification above describes *who creates* a datasource. The retrieval pipeline describes *how data flows* from a source into the RAG context at query time. Every datasource follows one of three paths:
+
+```
+                         ┌──────────────────────────┐
+                         │    Chat dataSources[]     │
+                         │   (IDataSourceConfig[])   │
+                         └─────┬─────┬─────┬────────┘
+                               │     │     │
+            ┌──────────────────┘     │     └──────────────────┐
+            │                        │                        │
+            ▼                        ▼                        ▼
+  ┌───────────────────┐  ┌────────────────────┐  ┌─────────────────────────┐
+  │      VIRTUAL       │  │  PHYSICAL (INDEX)   │  │  PHYSICAL (CONNECTION)   │
+  │  No infrastructure │  │  Azure AI Search    │  │  External system via     │
+  │                    │  │                     │  │  Data Connection          │
+  │  • llmknowledge    │  │  • shared           │  │                          │
+  │  • websearch       │  │  • personal         │  │  ┌─────────────────────┐ │
+  │                    │  │  • workspace        │  │  │  Data Connection     │ │
+  │                    │  │  • sharepoint       │  │  │  (connectionId FK)   │ │
+  │                    │  │                     │  │  └──────────┬──────────┘ │
+  │                    │  │   Storage            │  │        ┌────┴────┐       │
+  │                    │  │     │                │  │        │         │       │
+  │                    │  │     ▼                │  │        ▼         ▼       │
+  │                    │  │   Azure AI Search    │  │   Vector DB   Retriever  │
+  │                    │  │   Index              │  │   (direct)    Flow       │
+  │                    │  │     │                │  │              (headless)  │
+  │                    │  │     ▼                │  │                │         │
+  │                    │  │   Documents          │  │                ▼         │
+  │                    │  │                     │  │            Documents     │
+  └─────────┬─────────┘  └─────────┬────────────┘  └────────────┬────────────┘
+            │                      │                             │
+            └──────────────────────┼─────────────────────────────┘
+                                   ▼
+                       ┌──────────────────────────┐
+                       │   Merged RAG Context      │
+                       │   → LLM Response          │
+                       └──────────────────────────┘
+```
+
+**Virtual** — No retrieval infrastructure. `llmknowledge` uses the model's training data; `websearch` injects live web results (Tavily, Brave, etc.).
+
+**Physical (Index)** — Documents live in storage (Azure Blob, OneDrive, or SharePoint) and are searchable via an Azure AI Search index. The index is auto-created per chat/user/library.
+
+**Physical (Connection)** — Documents are retrieved from an external system through a registered Data Connection (`IDataConnection`):
+
+| Path | Type | Connection Target | How It Works |
+|------|------|------------------|--------------|
+| **Vector → Connection** | `vectorretriever` | Pinecone, Qdrant, Weaviate, Chroma, Redis, pgvector, etc. | `vectorConnectionId` resolves to a Data Connection → direct vector similarity search → documents |
+| **Connection → Flow Retriever** | `flowretriever` | SQL databases, REST APIs, custom logic | `flowId` resolves to a headless retriever flow → flow executes with connection params → documents |
+
+Both connection-based paths are **ACL-checked** — the user must have access to the Data Connection in the registry before the query executes.
+
+### Security Model
+
+The chat security guard (`chatSecurityGuard.ts`) validates datasource access differently per kind:
+
+| Kind | Validation | Details |
+|------|-----------|---------|
+| **Kind 1** (Virtual) | Trusted | No index to protect. Enabled/disabled per chat config. |
+| **Kind 2** (File Storage) | Prefix / ownership | **Personal/Workspace**: index name prefix must match user's UPN. **Shared**: user must be entitled to the chat that owns the index. |
+| **Kind 3** (Admin External) | Catalog ACL | `datasourceId` is looked up in the catalog → entitlement service checks the user's access against the catalog entity's ACL. |
+
+### Built-In Datasource IDs
+
+The following UUIDs are reserved for built-in datasource templates (prefix `0a`):
+
+| ID | Name | Type |
+|----|------|------|
+| `0a..001` | LLM Knowledge | `llmknowledge` |
+| `0a..002` | Workspace | `workspace` |
+| `0a..003` | Shared Files | `shared` |
+| `0a..004` | Personal Files | `personal` |
+| `0a..005` | Web Search | `websearch` |
+| `0a..006` | Flow Retriever | `flowretriever` |
+| `0a..007` | Vector Store | `vectorretriever` |
+| `0a..008` | SharePoint | `sharepoint` |
+
+### Admin UI
+
+The Datasources admin page (**Admin → Datasource Catalog** [`#/admin/datasources`]) presents all catalog entries in a data grid:
+
+- **Built-in entries** show a lock icon and cannot be deleted. Only name, description, tags, and permissions are editable.
+- **Admin entries** support full CRUD including connection details, type, and permissions.
+- **Workspace Datasource Settings** configure which catalog entries are activated by default for workspace and shared chats (`IAppSettings.workspaceDataSources[]` and `defaultChatDataSources[]`).
+
+### Chat Types & Data Sources
+
+Chats in Findable use a **multi-source RAG architecture**. Each chat's `dataSources` array (`IDataSourceConfig[]`) is the sole source of truth for where documents come from. A chat with an empty array operates in LLM-only mode (no retrieval).
+
+#### Data Source Types (`DATASOURCE_TYPE`)
+
+Each entry in the `dataSources` array has a `type` that determines storage, indexing, and retrieval behaviour:
+
+| Type | Enum Value | Storage | Search Index | Use Case |
+|------|-----------|---------|-------------|----------|
+| **Shared** | `shared` | Azure Blob → `Shared/{folderName}/` | Auto-created per folder | Team knowledge bases with uploaded documents |
+| **Personal** | `personal` | Azure Blob → `Personal/{sanitized-upn}/` | Auto-created per user | Private user files (persisted chats) |
+| **Workspace** | `workspace` | Azure Blob `Private/` or OneDrive | Resolved at runtime from user UPN | Ephemeral session workspace files |
+| **SharePoint** | `sharepoint` | SharePoint Online | Auto-created per library | Index and search SharePoint document libraries |
+| **Flow Retriever** | `flowretriever` | N/A (virtual) | N/A — flow returns documents directly | Headless retriever flows that query databases, APIs, or custom logic |
+| **Vector Retriever** | `vectorretriever` | External vector store | N/A — queries vector DB directly | Query Pinecone, Qdrant, Weaviate, Chroma, Redis, pgvector, etc. |
+| **Web Search** | `websearch` | N/A (live results) | N/A | Ground responses in real-time web search results |
+| **LLM Knowledge** | `llmknowledge` | N/A | N/A | LLM-only mode — no retrieval, uses model's training data |
+
+#### `IDataSourceConfig` Fields
+
+Every data source entry supports the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `string` | Unique identifier for this source |
+| `datasourceId` | `string?` | FK to `IDataSource.id` in the datasource catalog (provenance link) |
+| `indexName` | `string` | Azure Search index name. `PERSONAL`: persisted from UPN + chatTitle. `WORKSPACE`: empty — resolved at runtime. |
+| `searchEndpoint` | `string?` | Search endpoint ID (uses default if not set) |
+| `weight` | `number?` | Result weighting 0.0–1.0 (default: 1.0) |
+| `maxResults` | `number?` | Max documents from this source |
+| `filter` | `string?` | Static OData filter expression |
+| `label` | `string?` | Display name (e.g. "Company Docs", "My Files") |
+| `type` | `DATASOURCE_TYPE?` | Source type — determines storage and retrieval |
+| `enabled` | `boolean?` | Whether this source is active (default: true) |
+| `enableAclFiltering` | `boolean?` | Enable native ACL filtering on the search index |
+| `allowUserToggle` | `boolean?` | End users can disable this source at runtime from the sidebar |
+| `allowUserWeightEdit` | `boolean?` | End users can adjust the source weight at runtime |
+| `allowUserMaxResultsEdit` | `boolean?` | End users can adjust max results at runtime |
+| `selectedFolder` | `string?` | Blob folder name for file-backed sources |
+
+#### Multi-Source Result Merging
+
+When a chat has multiple data sources, results are merged using the `resultMergeStrategy` field (`RESULT_MERGE_STRATEGY` enum) on `IChatTabDBItem`:
+
+| Strategy | Enum Value | Description |
+|----------|-----------|-------------|
+| **Interleave** | `interleave` | Round-robin results from each source (default) |
+| **Weighted** | `weighted` | Score-based ranking with per-source `weight` values |
+| **Sequential** | `sequential` | Results from source 1, then source 2, etc. |
+
+The `deduplicateResults` boolean flag removes duplicate documents that appear across multiple sources.
+
+#### Chat Classification (`CHAT_KIND`)
+
+`CHAT_KIND` is a **virtual, non-persisted** runtime label derived at query time by `getChatKind(chat)`. It is **never stored in Cosmos DB** and must not be used for ACL or storage decisions — those are governed by `EntityScope`.
+
+| Kind | Derivation | Description |
+|------|-----------|-------------|
+| `CHAT_KIND.SHARED` | `scope === EntityScope.Shared` | ACL-governed shared chat |
+| `CHAT_KIND.WORKSPACE` | `isWorkspace === true` (server-set) | Ephemeral workspace session |
+| `CHAT_KIND.PERSONAL` | All other cases | Personal persisted chat |
+
+Use `isSharedChat()`, `isWorkspaceChat()`, `isPersonalChat()` from `@eaai/shared` rather than reading the enum value directly.
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `shared/src/domain/datasources/datasource.ts` | `IDataSource` interface, `DataSourceOrigin` enum, `BUILT_IN_LOCKED_FIELDS` |
+| `src/bootstrap/bootstrapdatasources.ts` | Built-in datasource definitions and default workspace/chat settings |
+| `src/datasources/seedDatasources.ts` | Bootstrap seed logic with migration support |
+| `src/datasources/datasourcesrouter.ts` | CRUD API with origin-based guards |
+| `src/azure/ai/chatSecurityGuard.ts` | Runtime datasource validation per kind |
+| `client/src/components/Datasources/` | Admin UI — catalog grid, editor dialog, workspace settings |

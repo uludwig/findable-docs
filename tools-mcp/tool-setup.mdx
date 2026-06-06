@@ -1,0 +1,239 @@
+---
+title: "Tool Setup Guide"
+description: "Setup instructions for each built-in tool category — search, database, utility, API, identity, Exchange, and OneDrive."
+---
+
+This section provides setup instructions for each built-in tool category. Tools are managed in **Admin → Tools** and can be attached to flows or made available to agents.
+
+---
+
+### Search Tools
+
+Search tools allow agents to query the web for real-time information. Each provider requires an API key.
+
+#### Tavily Web Search
+
+AI-optimized search engine designed for LLMs, returning clean and concise results.
+
+**Setup Steps:**
+
+1. Sign up at [tavily.com](https://app.tavily.com/home) and obtain an API key
+2. In **Admin → Tools**, find **Tavily Web Search** and enter your API key
+3. Enable the tool
+
+**Environment Variable:** `TAVILY_API_KEY`
+
+---
+
+#### Perplexity Web Search
+
+Perplexity AI search API for real-time web search with AI-summarized results.
+
+**Setup Steps:**
+
+1. Sign up at [perplexity.ai](https://www.perplexity.ai/settings/api) and generate an API key from the API settings
+2. In **Admin → Tools**, find **Perplexity Web Search** and enter your API key
+3. Enable the tool
+
+**Environment Variable:** `PERPLEXITY_API_KEY`
+
+---
+
+#### Brave Web Search
+
+Privacy-focused web search API with independent index.
+
+**Setup Steps:**
+
+1. Sign up at [brave.com/search/api](https://api.search.brave.com/app/keys) and obtain an API key
+2. In **Admin → Tools**, find **Brave Web Search** and enter your API key
+3. Enable the tool
+
+**Environment Variable:** `BRAVE_API_KEY`
+
+---
+
+#### Exa Web Search
+
+Neural search API that understands meaning, not just keywords.
+
+**Setup Steps:**
+
+1. Sign up at [exa.ai](https://dashboard.exa.ai/api-keys) and generate an API key
+2. In **Admin → Tools**, find **Exa Web Search** and enter your API key
+3. Enable the tool
+
+**Environment Variable:** `EXA_API_KEY`
+
+---
+
+#### SerpAPI Web Search
+
+Google Search results API supporting multiple search engines.
+
+**Setup Steps:**
+
+1. Sign up at [serpapi.com](https://serpapi.com/manage-api-key) and obtain an API key
+2. In **Admin → Tools**, find **SerpAPI Web Search** and enter your API key
+3. Enable the tool
+
+**Environment Variable:** `SERPAPI_API_KEY`
+
+---
+
+### Database Tools
+
+Database tools enable agents to query, inspect schemas, and list tables across various database platforms. All database tools use the **Data Platform Connections** system — configure connections in **Admin → Data Connections** first, then attach them to database tools.
+
+Supported database providers:
+
+| Provider | Provider ID | Notes |
+|----------|-------------|-------|
+| Generic SQL | `sql` | ODBC-compatible databases |
+| [PostgreSQL](https://www.postgresql.org/) | `postgres` | Native PostgreSQL driver |
+| [MySQL](https://dev.mysql.com/) | `mysql` | MySQL / MariaDB |
+| [Microsoft SQL Server](https://learn.microsoft.com/en-us/sql/sql-server/) | `mssql` | T-SQL / Azure SQL |
+| [Oracle](https://www.oracle.com/database/) | `oracle` | Oracle Database |
+| [IBM DB2](https://www.ibm.com/db2) | `db2` | IBM DB2 LUW |
+| [Azure Cosmos DB](https://portal.azure.com/#browse/Microsoft.DocumentDb%2FdatabaseAccounts) | `cosmos` | SQL API queries |
+| [Databricks](https://accounts.cloud.databricks.com/) | `databricks` | Databricks SQL Warehouse |
+| [Snowflake](https://app.snowflake.com/) | `snowflake` | Snowflake Data Cloud |
+| [Google BigQuery](https://console.cloud.google.com/bigquery) | `bigquery` | BigQuery SQL |
+| [Azure Synapse Analytics](https://portal.azure.com/#browse/Microsoft.Synapse%2Fworkspaces) | `synapse` | Synapse Serverless/Dedicated SQL |
+| [AWS Redshift](https://console.aws.amazon.com/redshiftv2/) | `redshift` | Amazon Redshift |
+| [AWS Athena](https://console.aws.amazon.com/athena/) | `athena` | Serverless queries on S3 |
+| [ClickHouse](https://clickhouse.cloud/) | `clickhouse` | OLAP analytics database |
+| [Trino](https://trino.io/) | `trino` | Distributed query engine |
+
+**Setup Steps (all database providers):**
+
+1. Go to **Admin → Data Connections** and create a connection for your database
+2. Provide the connection string, credentials, and test the connection
+3. In **Admin → Tools**, find the tool(s) for your database provider
+4. Select the data connection from the dropdown
+5. Enable the tool(s) you need (Natural Language Query, Execute Query, Schema Inspector, Table Listing)
+
+> **Tip:** Enable **Read Only** mode for safety — this restricts tools to `SELECT` queries only.
+
+---
+
+### Internal Cosmos DB Tools
+
+Two special database tools query the app's own Cosmos DB instance:
+
+- **Internal Cosmos DB Query** — For user-facing queries with partition-key isolation
+- **Admin Cosmos DB Query** — For admin-level cross-partition queries
+
+These tools use the app's existing Cosmos DB credentials and require no additional configuration. Enable them in **Admin → Tools**.
+
+---
+
+### Utility Tools
+
+Utility tools provide common helper functions. Most are enabled by default and require no API keys.
+
+| Tool | Provider ID | Requires API Key |
+|------|-------------|------------------|
+| Calculator | `calculator` | No |
+| Weather Information | `weather` | Yes (OpenWeatherMap) |
+| Code Interpreter | `code_interpreter` | No (requires sandbox) |
+| JSON Formatter & Validator | `json_tools` | No |
+| Base64 Encoder/Decoder | `base64_tools` | No |
+| UUID Generator | `uuid_generator` | No |
+| Hash Generator | `hash_generator` | No |
+| JWT Decoder | `jwt_decoder` | No |
+| Regex Tester | `regex_tester` | No |
+| Timestamp Converter | `timestamp_converter` | No |
+| URL Parser & Builder | `url_parser` | No |
+| Text Diff Comparison | `text_diff` | No |
+| String Transformer | `string_transform` | No |
+
+#### Weather Information Setup
+
+1. Sign up at [openweathermap.org](https://home.openweathermap.org/api_keys) and obtain an API key
+2. In **Admin → Tools**, find **Weather Information** and enter your API key
+3. Select temperature units (Celsius or Fahrenheit)
+4. Enable the tool
+
+#### Code Interpreter Setup
+
+The Code Interpreter executes Python code in a sandboxed environment. It requires a sandbox runtime to be configured (disabled by default).
+
+---
+
+### API Tools
+
+API tools allow agents to interact with external APIs.
+
+#### GraphQL Tools
+
+Four GraphQL tools are available: **Query**, **Introspection**, **Schema Validator**, and **Query Builder**. These require no API keys — provide the GraphQL endpoint URL when invoking the tool.
+
+Enable them in **Admin → Tools**.
+
+#### REST API Tools
+
+Six REST tools are available: **Generic Request**, **GET**, **POST**, **PUT**, **PATCH**, and **DELETE**, plus **OAuth2-authenticated requests** and a **Webhook Sender**.
+
+These require no pre-configured API keys — authentication headers are provided at invocation time.
+
+Enable them in **Admin → Tools**.
+
+---
+
+### Identity Tools (Microsoft Entra ID)
+
+Entra ID tools look up users, managers, direct reports, and search the directory. They use the app's **existing Graph API credentials** (managed identity or client secret) — no additional configuration needed.
+
+| Tool | Description |
+|------|-------------|
+| Entra User Lookup | Get user profile by email/UPN |
+| Entra Get Manager | Get a user's direct manager |
+| Entra Get Direct Reports | List a user's direct reports |
+| Entra Search Users | Search users by name, email, department, or title |
+
+**Setup:** Enable the desired tools in **Admin → Tools**. The Entra Identity tools read extended directory fields (jobTitle, department, employeeId, etc.) that go beyond the basic profile, so the server's Graph app registration ([Azure Portal → App registrations](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade)) needs **`User.Read.All`** (Application). This is on top of the unconditional `User.ReadBasic.All` + `GroupMember.Read.All` required by every authenticated request — see [Server App Registration](/access-identity/azure-app-registration) for the full picture.
+
+---
+
+### Exchange Online Tools
+
+Exchange tools use **delegated (OBO)** Graph API permissions — they execute as the authenticated user.
+
+| Tool | Delegated Scope Required |
+|------|--------------------------|
+| Send Email | `graph_mail_send` |
+| List Messages | `graph_mail_read` |
+| Search Messages | `graph_mail_read` |
+| List Calendar Events | `graph_calendar_read` |
+| Create Calendar Event | `graph_calendar_write` |
+| Get Out of Office | `graph_mailbox_settings` |
+
+**Setup:**
+
+1. In the [Azure AD App Registrations](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) portal, open your **Client App Registration** and add the required delegated Graph permissions (e.g., `Mail.Send`, `Mail.Read`, `Calendars.ReadWrite`, `MailboxSettings.Read`)
+2. Grant admin consent for the permissions
+3. In the app's **Admin → Settings**, enable the corresponding `enableDelegatedGraph*` settings
+4. In **Admin → Tools**, enable the desired Exchange tools
+
+---
+
+### OneDrive Tools
+
+OneDrive tools also use **delegated (OBO)** Graph API permissions.
+
+| Tool | Delegated Scope Required |
+|------|--------------------------|
+| List Files | `graph_files_read` |
+| Search Files | `graph_files_read` |
+| Get File Content | `graph_files_read` |
+| Upload File | `graph_files_readwrite` |
+| Create Folder | `graph_files_readwrite` |
+| Get Sharing Link | `graph_files_readwrite` |
+
+**Setup:**
+
+1. In the [Azure AD App Registrations](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) portal, open your **Client App Registration** and add `Files.Read` and/or `Files.ReadWrite` delegated Graph permissions
+2. Grant admin consent for the permissions
+3. In the app's **Admin → Settings**, enable `enableDelegatedGraphFiles` (read) and/or `enableDelegatedGraphFilesWrite` (write)
+4. In **Admin → Tools**, enable the desired OneDrive tools

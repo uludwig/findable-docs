@@ -1,0 +1,137 @@
+---
+title: "Prerequisites & Tech Stack"
+description: "Runtime, services, and tooling required to run Findable plus the platform's key features."
+---
+
+Findable is an enterprise-grade AI assistant platform designed to make AI accessible to corporate users. Built with a [React](https://react.dev/) frontend and [Node.js](https://nodejs.org/) backend, it's optimized for [Azure](https://portal.azure.com/) deployment with [Microsoft Entra ID](https://entra.microsoft.com/) authentication.
+
+**Version:** 3.2.29 | **Node.js:** ≥24 | **License:** Private
+
+### Key Features
+
+#### AI & LLM Support
+- **Multi-Provider LLM Support** - Azure AI, OpenAI, Anthropic, Google Gemini, xAI (Grok), DeepSeek, Perplexity, Mistral, Cohere, Groq, AWS Bedrock, Ollama, Fireworks AI, Together AI, DeepInfra, Prem AI
+- **LangChain Integration** - Advanced orchestration with visual flow designer
+- **Model Context Protocol (MCP)** - Extensible tool integration framework
+- **Streaming Responses** - Real-time SSE streaming for all providers
+- **Memory System** - Persistent conversation memory with Mem0 integration
+
+#### Enterprise Platform
+- **AI-Powered Intranet** - Organize managed and personal AI chats into navigable pages and sections, creating a structured knowledge hub for your organization
+- **Categorized Chats & Prompts** - Scalable system of secure, role-gated chats and prompt templates organized by department, function, or topic
+- **[Microsoft Entra ID](https://entra.microsoft.com/) Authentication** - SSO with Azure AD groups and individual user principals
+- **Role-Based Access Control** - Owners, contributors, and users with ACL inheritance at app, page, and entity levels
+- **Personal & Shared Workspaces** - Private chats alongside collaborative shared chats with fine-grained permissions
+- **Audit Logging** - Comprehensive chat logging, feedback tracking, and user activity monitoring
+- **Data Isolation** - Scoped data with Cosmos DB partitioning and per-user storage containers
+- **Embedded Agent Mode** - Embed any chat as a standalone agent widget via iframe in external apps or portals
+
+#### Data Connections
+- **Natural Language SQL** - Query live databases conversationally across PostgreSQL, SQL Server, MySQL, Oracle, Snowflake, BigQuery, Athena, ClickHouse, and DB2
+  - **Query Result Caching** - 5-minute cache for frequently asked questions
+  - **Query Explanation Mode** - Explain how a query works without executing it
+  - **Multi-turn Context** - Follow-up questions reference previous queries (session-based)
+- **[SharePoint](https://admin.microsoft.com/sharepoint) Integration** - Index and search SharePoint document libraries with optional document-level ACL
+- **[Azure AI Search](https://portal.azure.com/#browse/Microsoft.Search%2FsearchServices)** - Full-text, vector, and semantic hybrid search with managed identity support
+- **Vector Stores** - [Pinecone](https://app.pinecone.io/), [Qdrant](https://qdrant.tech/), [Weaviate](https://weaviate.io/), [Chroma](https://www.trychroma.com/), [OpenSearch](https://opensearch.org/), [Elasticsearch](https://www.elastic.co/elasticsearch), [Redis](https://redis.io/), Supabase, Neo4j
+- **Web Search RAG** - Ground chat responses in real-time web results from Tavily, Perplexity, Brave, Exa, or SerpAPI with domain filtering and pinned reference pages
+- **Flow Retriever** - Use headless Flow Designer flows as virtual data sources in the RAG pipeline — query databases, APIs, or any custom logic and merge results alongside traditional search
+
+#### Flow Orchestrator
+- **Visual Flow Designer** - Build complex multi-step AI agent workflows with a drag-and-drop visual editor
+- **Human-in-the-Loop** - Agents can pause execution and request input from specific users or groups, with responses collected via the app, email, Microsoft Teams, or Slack
+- **Assignments** - Push configured chats and flows to individuals or groups, track completion with configurable criteria, enforce deadlines, and support delegation and retry budgets
+- **Multi-Channel Notifications** - Reach users through email ([SendGrid](https://app.sendgrid.com/), [Azure Communication Services](https://portal.azure.com/#browse/Microsoft.Communication%2FCommunicationServices)), [Microsoft Teams](https://www.microsoft.com/en-us/microsoft-teams/group-chat-software), and [Slack](https://api.slack.com/apps) with actionable links back to pending tasks
+- **Ephemeral Forms** - Agents dynamically generate structured input forms at runtime, collecting validated user data mid-flow
+- **ReAct Agents** - Autonomous reasoning-and-acting agents with tool calling, web search, and MCP server integration
+- **Streaming Execution** - Real-time SSE streaming of agent reasoning steps and tool outputs
+
+#### User Experience
+- **Prompt Library** - Personal and organizational prompt templates with variables, system sources, and conditional logic
+- **Rich Content Rendering** - Markdown, code syntax highlighting, LaTeX math (KaTeX), Mermaid diagrams, Recharts visualizations
+- **File Upload** - Azure Blob storage with automatic document indexing
+- **Favorites & Navigation** - Customizable pages and sections with drag-and-drop ordering
+- **Feedback System** - Thumbs up/down with detailed feedback forms and admin review
+
+### Tech Stack
+
+#### Backend
+- **Runtime:** [Node.js](https://nodejs.org/) 20+
+- **Framework:** [Express.js](https://expressjs.com/)
+- **Language:** [TypeScript](https://www.typescriptlang.org/)
+- **AI/ML:** [LangChain](https://js.langchain.com/), [MCP SDK](https://modelcontextprotocol.io/)
+- **Database:** [Azure Cosmos DB](https://learn.microsoft.com/en-us/azure/cosmos-db/)
+- **Search:** [Azure AI Search](https://learn.microsoft.com/en-us/azure/search/)
+- **Storage:** [Azure Blob Storage](https://learn.microsoft.com/en-us/azure/storage/blobs/)
+- **Auth:** [MSAL](https://learn.microsoft.com/en-us/entra/msal/), [Microsoft Graph](https://learn.microsoft.com/en-us/graph/)
+
+#### Frontend
+- **Framework:** [React](https://react.dev/) 18
+- **Build Tool:** [Vite](https://vite.dev/)
+- **UI Library:** [Material-UI (MUI)](https://mui.com/)
+- **State:** [Redux Toolkit](https://redux-toolkit.js.org/)
+- **Forms:** [React Hook Form](https://react-hook-form.com/) + [Zod](https://zod.dev/)
+- **Rendering:** Markdown, [KaTeX](https://katex.org/), [Mermaid](https://mermaid.js.org/), [Recharts](https://recharts.org/)
+
+#### Infrastructure
+- **Hosting:** [Azure App Service](https://portal.azure.com/#browse/Microsoft.Web%2Fsites)
+- **Auth:** [Microsoft Entra ID](https://entra.microsoft.com/)
+- **CI/CD:** [GitHub Actions](https://github.com/features/actions)
+
+### Internationalization
+
+The UI supports 8 languages out of the box, selectable per user:
+
+| Code | Language |
+|------|----------|
+| `en` | English (default) |
+| `es` | Spanish |
+| `fr` | French |
+| `de` | German |
+| `pt` | Portuguese |
+| `zh` | Chinese |
+| `hi` | Hindi |
+| `bn` | Bengali |
+
+Administrators can manage translations via **Admin → Translations** ([`#/admin/translations`], setting key `translations`).
+
+### Scripts
+
+| Script | Description |
+|--------|-------------|
+| `npm run dev` | Start development server with hot reload |
+| `npm run build` | Build all packages for production |
+| `npm run build:shared` | Build shared module only |
+| `npm run build:client` | Build client only |
+| `npm run build:server` | Build server only |
+| `npm start` | Start production server |
+| `npm test` | Run test suite |
+| `npm run clean` | Clean build artifacts |
+
+### Testing
+
+Findable uses [Vitest](https://vitest.dev/) for unit, component, and server-integration tests, organized as three projects in a single workspace.
+
+```sh
+# Run the full suite once (CI default — fails on the first failing test)
+npm test
+
+# Re-run on every change (watch mode for active development)
+npm run test:watch
+
+# Open the Vitest UI dashboard in a browser
+npm run test:ui
+
+# Type-check the tests without running them
+npm run typecheck:tests
+```
+
+The workspace at `vitest.workspace.ts` defines three projects so each test runs under the right environment:
+
+| Project | Files | Environment | What it covers |
+|---|---|---|---|
+| **`shared`** | `shared/src/**/*.test.ts` | Node | Pure utilities + types in the `@findable/shared` package |
+| **`server`** | `src/**/*.test.ts` | Node | Server logic — auth middleware, permission/health checks, route handlers — with Azure SDKs mocked at the module boundary via `vi.mock()` |
+| **`client`** | `client/src/**/*.test.tsx` | jsdom + React | React components with [`@testing-library/react`](https://testing-library.com/docs/react-testing-library/intro/). Mock data hooks rather than hitting the network. |
+
+The `@findable/shared` import alias resolves to `shared/src` during tests (not the built `shared/dist`), so tests don't require a pre-build step. Vitest's esbuild compiles TS on the fly.

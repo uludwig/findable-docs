@@ -1,0 +1,164 @@
+---
+title: "Role-Based UI Access Control"
+description: "App-level roles, entity-level ACLs, inheritance, and per-role UI visibility for chats, pages, flows, and admin pages."
+---
+
+Findable enforces role-based visibility on the client side. Server-side permissions remain the ultimate authority, but the UI hides or removes actions that a user cannot perform.
+
+### Permission Model Summary
+
+Findable uses a single, consistent permission structure across the entire application. The previous chat-specific roles of owner / contributor / user have been fully removed. In their place, four app-level roles are configured in **Admin → App Roles** ([`#/admin/roles`]):
+
+| App-Level Role | Description |
+|----------------|-------------|
+| **App Owner** | Full admin access — app settings, entity management, ACL bypass |
+| **App Content Manager** | Can create and manage all shared entities — no access to admin settings pages |
+| **Default Contributor** | ACL principals injected into the `contributors` list of inheriting entities — not a standalone role |
+| **App User** | Basic read/use access to the application and shared entities |
+
+These roles map into three effective **entitlement levels** that flow through every entity in the system:
+
+| Entitlement Level | Composed From |
+|--------------------|---------------|
+| **Owner** | App Owner + App Content Manager |
+| **Contributor** | Default Contributor |
+| **User** | App User |
+
+Permissions inherit automatically from app settings down through the entity hierarchy:
+
+```
+App Settings (Owner / Contributor / User)
+  └── Page (inherits from app, or sets its own ACL)
+       └── Section (inherits from page)
+            └── Chat (inherits from section/page, or sets its own ACL)
+```
+
+Any entity can **break inheritance** to define its own explicit ACL. When it does, only the principals listed directly on that entity (and its children) apply — the app-level defaults no longer propagate to that branch.
+
+### Access Control Model
+
+Access is enforced at **two layers**:
+
+| Layer | What it controls | Where configured |
+|-------|-----------------|------------------|
+| **App-level** | Can the user log in and see the application? | Admin → App Roles ([`#/admin/roles`]) |
+| **Entity-level** | Can the user see a specific chat, page, prompt, or flow? | Per-entity owners/contributors/users lists |
+
+**App-level access** is determined by the Access Control section in **Admin → App Roles** ([`#/admin/roles`]):
+
+- **Owners (Administrators)** — Full admin access including app settings (required; at least one must be configured)
+- **Content Managers** — Can create and manage all shared entities (chats, pages, flows, prompts). Automatically treated as **owners** on all entities that inherit permissions from app settings, giving them full management access throughout the inheritance chain. Content Managers do **not** have access to admin settings pages.
+- **Default Contributors** — Default contributor principals inherited by entities through the entitlement system. Entities that inherit permissions will include these contributors in their ACL. This is an ACL default, not a standalone app-level role.
+- **Users** — Basic read/use access to the application
+- **Allow all authenticated tenant users** — When enabled, all *internal* tenant users automatically receive User-level access without being explicitly listed. The Users picker remains visible so administrators can add guest or external users who need access. Guest/external users are **not** covered by this toggle — they must be added explicitly. When the toggle is off and no users or groups are configured, a warning appears: only Administrators and Content Managers will be able to access the application.
+- **Block external / guest users** — When enabled, external users (identified by `#EXT#` in UPN) receive a 403 regardless of any role assignments.
+
+If a user is authenticated but not in any of the four principal lists (and the "allow all" toggle is off), they are redirected to an Unauthorized page.
+
+**Entity-level access** is enforced by the entitlement service (`entitlementservice.ts`). Each entity (chat, page, prompt, flow, etc.) has its own `owners`, `contributors`, and `users` principal lists. When `allowAllAuthenticatedUsers` is enabled, non-external tenant users also receive User (read) access to all shared-scope entities, even if they are not in the entity's ACL. Entity-specific ACLs always take priority — if a user is listed as an owner or contributor on an entity, they keep that elevated role.
+
+### Roles
+
+| Role | Source | Description |
+|------|--------|-------------|
+| **Admin** | `isAdmin` flag — matched against Admin → App Roles ([`#/admin/roles`]) → Owners | Full access to all app settings and entity management. Bypasses all ACL checks. |
+| **Content Manager** | `isContributor` flag — matched against Admin → App Roles ([`#/admin/roles`]) → Content Managers | Can create and manage shared entities. Merged into the **owners** ACL at the app-settings inheritance level, so they appear as owners on all top-level entities (and their children, until inheritance is broken). Does not have access to admin settings pages. |
+| **User** | `isUser` flag — explicitly listed in Users, or granted implicitly via `allowAllAuthenticatedUsers` toggle | Read/use access to the application and shared entities. |
+
+> **Note:** "Default Contributors" configured in **Admin → App Roles** ([`#/admin/roles`]) are **not** a standalone role. They are ACL principals that are injected into the `contributors` list of entities that inherit permissions from app settings. A user who is only a Default Contributor does not get the Content Manager role — they only appear as a contributor on inheriting entities.
+
+### Content Manager Inheritance
+
+Content Managers receive ownership through the ACL inheritance chain, not through an admin bypass flag. The entitlement service merges Content Managers into the `owners` principal list at the app-settings level. This propagates naturally:
+
+```
+App Settings (owners + contentManagers merged → owners)
+  └── Page (inherits → Content Managers appear as owners)
+       └── Chat (inherits → Content Managers appear as owners)
+```
+
+Whenever an entity **breaks inheritance** (sets its own explicit ACL), Content Managers lose automatic ownership on that entity and its children unless they are explicitly added to the entity's ACL.
+
+### Per-Field Inheritance
+
+Entities support **granular inheritance control** via the `inheritEntitlements` field:
+
+| Value | Behavior |
+|-------|----------|
+| `true` (default) | Inherit **all** fields (owners, contributors, users) from parent or app settings |
+| `false` | Use entity's own explicit ACL for all fields |
+| `{ owners: true, contributors: false, users: true }` | Per-field control — each principal list independently inherits or uses its own value |
+
+This allows patterns like:
+- Inherit owners and users from the parent page, but set custom contributors on a specific chat
+- Override only the users list while keeping owners and contributors inherited
+
+Per-field inheritance uses the same `IEntitlementInheritance` interface on chats, pages, prompts, flows, and all other entitled entities.
+
+### Hide from Catalog
+
+Every entitled entity (chats, prompts, prompt groups, pages, flows, datasources, MCP servers, tools, AI search/model endpoints, etc.) supports an optional **`hideFromCatalog: boolean`** field on `IEntitledEntity` / `EntitledEntityBase`.
+
+| `hideFromCatalog` | End-user discovery (read-only viewers, public-read fallback) | Owners / contributors / admins |
+|---|---|---|
+| `false` (default) | Visible in catalogs, recommendations, and searches | Visible |
+| `true` | **Suppressed** in catalogs, recommendations, and searches | Still visible — they may need to manage the entity |
+
+**Where it applies:**
+
+- **Entitlement service** (`entitlementservice.getEntitledEntities()`) — automatically filters hidden entities out of `user`-only results so they never appear in any endpoint built on top of the service.
+- **AI Recommendation service** (`recommendationService.ts`) — applies a stricter rule: hidden entities are dropped from the prompt / chat / page catalogs sent to the LLM **for everyone** (including admins and owners), so they are never recommended as a starting point.
+
+**When to use it:**
+
+- Flow-internal prompts (entry prompts referenced by `entryPromptId`) that are never invoked directly.
+- Repeater sub-prompts referenced by parent prompts via `promptTemplateId`.
+- Admin-only or backend / 2nd-tier entities that should not pollute end-user discovery surfaces even when a viewer happens to be entitled to them.
+
+The toggle is exposed in the prompt and prompt-group editors as **"Hide from catalog"** with helper text *"When enabled, this prompt is hidden from user recommendations and catalog searches."* Other entity editors can opt in by reading/writing the same field.
+
+### Navigation Drawer (Pages, Chats, Groups)
+
+| Action | Admin | Content Manager | User |
+|--------|-------|-----------------|------|
+| Edit Chat (own / unsecured) | ✅ | ✅ | ❌ Hidden |
+| Edit Chat (other's secured) | ✅ | ❌ Hidden | ❌ Hidden |
+| Edit Page Group | ✅ | ✅ | ❌ Hidden |
+| Create Chat | ✅ | ✅ | ❌ Hidden |
+| Create Sub-Group | ✅ | ✅ | ❌ Hidden |
+| Create Page | ✅ | ✅ | ❌ Hidden |
+| Favorites / History | ✅ | ✅ | ✅ |
+
+Per-entity checks use the `owner`, `contributor`, and `unsecured` flags from `IEntitledEntity` (computed server-side by the entitlement service).
+
+### Flow Designer
+
+| Action | Admin | Content Manager | User |
+|--------|-------|-----------------|------|
+| View flows / Open Designer | ✅ | ✅ | ❌ Redirected |
+| Create / Edit / Delete flow | ✅ | ✅ | ❌ Hidden |
+| Copy flow | ✅ | ✅ | ❌ Hidden |
+| Manage Flow Groups | ✅ | ✅ | ❌ Hidden |
+
+### Admin Pages
+
+Admin pages are split into two categories:
+
+**Settings pages** (modify `appSettings`) — **Admin only**:
+AI, Sources, Security, Profile Sync, Memory, Feedback, Notification Providers, Look & Feel, SharePoint Entitlement, Translations, System Health, Bootstrap Assets, Chat History, Feedback Analysis
+
+**Entity list pages** (CRUD on individually permissioned items) — **Admin + Content Manager**:
+Model Endpoints, AI Search Endpoints, Database Connections, MCP Servers, Tools Registry, Flow Designer
+
+| Action | Admin | Content Manager | User |
+|--------|-------|-----------------|------|
+| Access entity list pages | ✅ | ✅ | ❌ Redirected to `/` |
+| Access settings pages | ✅ | ❌ Redirected to `/admin` | ❌ Redirected to `/` |
+| See admin nav items | ✅ All | Entity pages only | ❌ None |
+
+### Chat Group Tabs
+
+| Action | Admin | Content Manager | User |
+|--------|-------|-----------------|------|
+| Edit tab (own / unsecured) | ✅ | ✅ | ❌ Hidden |
+| Add new tab | ✅ | ✅ | ❌ Hidden |

@@ -1,0 +1,110 @@
+---
+title: "Prompt Library & Templates"
+description: "Reusable, parameterized prompts with rich input forms, variables, conditional logic, and AI-generated options."
+---
+
+Findable includes a full-featured prompt template system for creating reusable, parameterized prompts with rich input forms.
+
+### Prompt Templates
+
+A prompt template (`IPromptTemplate`) consists of:
+
+- **Content** — Markdown text with `{{variableName}}` placeholders
+- **Variable Specs** — Rich input definitions (`IPromptVariable[]`) that describe how each placeholder should be rendered as a form control
+- **Tags** — For organization and search
+- **Scope** — Personal (creator-only) or Shared (ACL-controlled)
+- **Groups** — Templates can be organized into prompt groups with drag-and-drop ordering
+
+### Variable Types
+
+Each variable has a `type` that determines the input control rendered in the form:
+
+**Basic Types** (always available):
+
+| Type | Control | Description |
+|------|---------|-------------|
+| `text` | TextField | Single-line text input |
+| `multiline` | TextArea | Multi-row text with configurable rows |
+| `number` | Numeric input | With optional min/max constraints |
+| `select` | Dropdown | Single-select from options list |
+| `multiselect` | Multi-select chips | Multiple selections from options list |
+| `boolean` | Toggle switch | True/false input |
+| `date` | Date picker | Calendar date selection |
+| `file` | File upload | Single or multiple file attachments |
+| `principal` | Azure AD picker | User and/or group selection |
+
+**Advanced Types** (require advanced mode toggle):
+
+| Type | Control | Description |
+|------|---------|-------------|
+| `range` | Slider | Numeric range with step control |
+| `hierarchy` | Tree builder | Nested structure input (org charts, nested lists) |
+| `datetime` | Date+Time picker | Combined date and time selection |
+| `time` | Time picker | Time-only selection |
+| `hidden` | None (invisible) | Pass data without UI — injected silently |
+| `password` | Masked input | Sensitive text entry |
+| `table` | Editable table | Structured or unstructured tabular data entry |
+| `repeater` | Dynamic list | Add/remove rows of sub-field groups |
+
+### Select Option Formats
+
+Select and multiselect variables support three option formats:
+
+- **Simple strings** — `["Option A", "Option B"]`
+- **Grouped options** — `{ group: "Fruits", items: ["Apple", "Banana"] }` for hierarchical dropdowns
+- **Rich options** — `{ value: "opt1", label: "Option 1", description: "Help text", icon: "CheckCircle", disabled: false }` for metadata-enhanced options
+
+### Dynamic Options Sources
+
+Instead of static options, select/multiselect variables can populate from system objects at runtime:
+
+| Source | Populates From |
+|--------|---------------|
+| `models` | AI Model Endpoints |
+| `searchEndpoints` | Azure AI Search Endpoints |
+| `dataPlatformConnections` | SQL/Database Connections |
+| `mcpServers` | MCP Server Registry |
+| `tools` | Tool Providers |
+
+### AI-Generated Options
+
+Individual select/multiselect variables can have AI generate their options at runtime:
+
+- **`aiPopulate`** — Enable AI-generated options for this variable
+- **`aiPrompt`** — Prompt sent to AI (supports `{{variable}}` references from flow context)
+- **`aiModelEndpointId`** — Optional model override
+- **`aiOptionsCount`** — Number of options to generate (default: 5)
+
+### Conditional Logic
+
+Variables support dynamic show/hide/require/disable rules based on other field values:
+
+```json
+{
+  "conditionals": [{
+    "field": "department",
+    "operator": "equals",
+    "value": "Engineering",
+    "action": "show"
+  }]
+}
+```
+
+Supported operators: `equals`, `not_equals`, `contains`, `not_contains`, `greater_than`, `less_than`, `is_empty`, `is_not_empty`, `in`, `not_in`
+
+Supported actions: `show`, `hide`, `require`, `disable`, `enable`
+
+### Layout & Visual Options
+
+- **Width** — `full`, `half`, `third`, `quarter` for responsive grid layout
+- **Variant** — `default`, `radio`, `chips`, `buttons` for select/multiselect/boolean display
+- **Ordering** — Explicit `order` field for display sequence
+- **Grouping** — Visual grouping via the `group` field
+
+### Text Validation
+
+Text and multiline variables support validation presets: `email`, `url`, `phone`, `ipv4`, `ipv6`, `subnet`, `uuid`, `alphanumeric`, `numeric`, or `custom` (regex pattern).
+
+### Chat-Specific Prompts
+
+Each chat can be assigned a **prompt group** from the Prompt Library via the `promptGroupId` field on the chat configuration. This surfaces the group's prompt templates in the chat's prompt selector, giving each chat a curated set of prompts without duplicating data.

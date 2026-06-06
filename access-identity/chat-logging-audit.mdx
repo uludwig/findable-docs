@@ -1,0 +1,24 @@
+---
+title: "Chat Logging & Audit"
+description: "Conversation logging, AI-generated titles, user privacy controls, and admin review."
+---
+
+All conversations are logged to the `chatlog` Cosmos DB container for audit and review.
+
+### Features
+
+- **Automatic logging** — Every message exchange is recorded with role, content, timestamps, and citations
+- **AI-generated titles** — The utility model generates concise titles for chat log entries asynchronously
+- **User controls** — Users can temporarily or permanently disable logging for their session
+- **Admin review** — **Admin → Chat History** ([`#/admin/chathistory`]) page with filtering, search, and export
+- **Rehydration** — Users can restore past personal conversations into their workspace from the chat log viewer
+
+### User Privacy Controls
+
+| Setting | Description |
+|---------|-------------|
+| `enableChatLog` | Global toggle for chat logging |
+| `enableChatLogTemporarilyDisableButton` | Allow users to pause logging for the session |
+| `enableChatLogPermanentlyDisableButton` | Allow users to permanently opt out |
+| `enableChatLogClearButton` | Allow users to clear their own chat history |
+| `chatLogWarningMessage` | Custom message displayed about logging policy |

@@ -1,0 +1,162 @@
+---
+title: "Flow Retriever (Virtual Data Source)"
+description: "Use headless Flow Designer flows as virtual data sources in the RAG pipeline."
+---
+
+The **Flow Retriever** lets you use headless Flow Designer flows as virtual data sources in the RAG pipeline. Instead of querying a search index, the system executes a retriever flow that can query databases, call APIs, run custom logic, or combine multiple sources — and the results are merged into the LangChain context alongside traditional search results.
+
+### How It Works
+
+```
+User sends a message
+  └── LangChain Orchestrator
+       ├── Azure AI Search (index-based sources) ────── documents
+       ├── Flow Retriever (flow-based sources) ───────── documents
+       ├── Vector Retriever (external vector stores) ─── documents   ──→  merged into RAG context
+       └── Web Search (if enabled) ───────────────────── documents
+```
+
+1. The orchestrator identifies `FLOW_RETRIEVER` entries in the chat's `dataSources[]`
+2. Each retriever source is executed in parallel via `performFlowRetrieverRAG()`
+3. The flow receives `{ query, connectionId, _retrieverInstructions }` as inputs
+4. The flow's final output is parsed as structured documents
+5. Documents are merged into the RAG context for the LLM to cite
+
+### Execution Contract
+
+Retriever flows receive these inputs automatically:
+
+| Input | Description |
+|-------|-------------|
+| `query` / `user_input` | The user's latest message |
+| `connectionId` | Resolved data connection ID (fixed or user-selected) |
+| `_retrieverInstructions` | Natural-language instructions set by the chat admin |
+| `_userId` | Authenticated user's ID |
+| `_userUpn` | Authenticated user's UPN |
+| `_userEmail` | Authenticated user's email |
+| Any `flowParams.*` | Additional parameters configured by the admin |
+
+The flow's final LLM node should produce one of these output formats:
+
+- **JSON array** — `[{ "title": "...", "content": "...", "url": "..." }]`
+- **JSON object with documents key** — `{ "documents": [...] }` or `{ "results": [...] }`
+- **Plain text** — Wrapped as a single document automatically
+
+JSON output can be wrapped in markdown code fences (`` ```json ... ``` ``).
+
+### Connection Modes
+
+| Mode | `connectionMode` | Behavior |
+|------|-----------------|----------|
+| **Fixed (admin-set)** | `fixed` | The admin selects a data connection at configuration time. It's baked into `flowParams.connectionId` and used for every query. The sidebar shows a read-only label. |
+| **User selects at runtime** | `user` | End users see a connection picker in the right sidebar. They choose a connection before each query. The selected ID is passed as `runtimeConnectionIds`. |
+| **Hybrid** | `hybrid` | Admin sets a default connection, but users can override it at runtime from the sidebar. Falls back to the admin default if the user hasn't chosen one. |
+
+All connections are **ACL-checked** before execution — the user must have access to the connection in the Data Platform Connections registry.
+
+### Configuring a Chat with Flow Retriever
+
+1. Open a chat's **Edit Form → Data Sources**
+2. Check **Flow Retriever**
+3. Select a **Retriever Flow** from the dropdown (only flows with `flowType: retriever` appear)
+4. Choose a **Connection Mode**:
+   - **Fixed** — pick a connection from the dropdown
+   - **User selects at runtime** — users choose in the sidebar
+5. Optionally add **Retriever Instructions** — natural-language guidance injected as `{{_retrieverInstructions}}`
+6. Save the chat
+
+### Creating a Retriever Flow
+
+Retriever flows are standard Flow Designer flows with a few constraints:
+
+1. **Set `flowType` to `retriever`** — In the flow editor, set the flow type to "Retriever". This marks the flow as headless and makes it available in the Flow Retriever dropdown.
+
+2. **No user interaction nodes** — Retriever flows must not contain `FORM_PROMPT` or `HUMAN` nodes. They execute headlessly with no user interaction at execution time.
+
+3. **Accept the standard inputs** — The Start node should expect `query` (the user's search text) and optionally `connectionId` and `_retrieverInstructions`.
+
+4. **Return structured documents** — The final LLM/output node should produce a JSON array of documents:
+
+   ```json
+   [
+     { "title": "Row 1", "content": "The data from this row...", "url": "optional-link" },
+     { "title": "Row 2", "content": "Another result..." }
+   ]
+   ```
+
+#### Example: Database Retriever Flow
+
+A typical SQL retriever flow has this node graph:
+
+```
+Start → LLM (NL→SQL) → Tool (Execute SQL) → LLM (Format Results) → End
+```
+
+**Nodes:**
+
+| # | Node Type | Purpose |
+|---|-----------|---------|
+| 1 | **Start** | Receives `{ query, connectionId }` |
+| 2 | **LLM** | Converts the natural-language query into SQL using a system prompt with schema context. Receives `{{_retrieverInstructions}}` for domain-specific guidance. |
+| 3 | **Tool** | Executes the generated SQL against the `connectionId` using the SQL tool provider |
+| 4 | **LLM** | Formats the raw query results into the structured `[{ title, content }]` JSON array |
+| 5 | **End** | Returns the formatted documents |
+
+**System prompt for node 2 (NL→SQL):**
+
+```
+You are a SQL query generator. Convert the user's natural-language question
+into a valid SQL query for the connected database.
+
+{{_retrieverInstructions}}
+
+User question: {{query}}
+
+Respond with ONLY the SQL query, no explanation.
+```
+
+**System prompt for node 4 (Format Results):**
+
+```
+Format the following SQL query results as a JSON array.
+Each element must have "title" and "content" fields.
+The title should be a short identifier. The content should be
+a natural-language summary of the row data.
+
+Results:
+{{sql_results}}
+
+Respond with ONLY the JSON array.
+```
+
+#### Bootstrapped Retriever Flows
+
+Two example retriever flows are included and can be seeded via **Admin → Bootstrap Assets** ([`#/admin/bootstrap`]) → **Bootstrap Flows**:
+
+| Flow | Group | Description |
+|------|-------|-------------|
+| **Database Retriever** | Retriever Flows | NL→SQL→Execute→Format pipeline for relational databases |
+| **Cosmos DB Retriever** | Retriever Flows | NL→Cosmos SQL→Execute→Format pipeline for Azure Cosmos DB |
+
+These flows are production-ready starting points. Clone and customize them for your specific database schemas and query patterns.
+
+### Security
+
+- **Connection ACL** — Every connection is checked against the user's entitlements before execution
+- **Flow validation** — Only flows with `flowType: retriever` are accepted
+- **User identity injection** — `_userId`, `_userUpn`, `_userEmail` are injected server-side for row-level filtering
+- **Timeout** — Each flow execution has a 30-second timeout boundary
+- **Parallel execution** — Multiple retriever sources execute in parallel; failures are isolated per-source
+
+### `IDataSourceConfig` Fields (Flow Retriever)
+
+> See [Datasource Catalog → `IDataSourceConfig` Fields](/data-sources/datasource-catalog) for the full field reference. Flow Retriever–specific fields are summarized below.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `'flowretriever'` | Identifies this as a flow retriever source |
+| `flowId` | `string` | FK to the retriever flow in the `flows` Cosmos container |
+| `flowParams` | `Record<string, any>` | Pre-configured inputs (e.g., `{ connectionId: '...' }`) |
+| `connectionMode` | `'fixed' \| 'user' \| 'hybrid'` | How the connection is resolved |
+| `retrieverInstructions` | `string` | NL instructions injected as `{{_retrieverInstructions}}` |
+| `indexName` | `''` | Always empty — flow retrievers don't use search indexes |

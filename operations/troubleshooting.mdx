@@ -1,0 +1,45 @@
+---
+title: "Troubleshooting"
+description: "Common issues, error symptoms, and the Admin → Health page diagnostics."
+---
+
+### Common Issues
+
+**MSAL redirect loop or blank page after login**
+- Ensure the redirect URI in your [Azure AD app registration](https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade) exactly matches the URL you're accessing (e.g., `https://localhost:3001` for dev, your App Service URL for prod)
+- Do not use random ports — the client must run on `https://localhost:3001` in development
+
+**Cosmos DB 401 / "cannot be authorized by AAD token"**
+- If using managed identity: verify the [App Service's](https://portal.azure.com/#browse/Microsoft.Web%2Fsites) system-assigned identity has the **Cosmos DB Built-in Data Contributor** role
+- If using API key: verify `AZURE_COSMOS_KEY` is correct and not expired
+- Check that `AZURE_COSMOS_AUTH_TYPE` matches your authentication method
+
+**Setup wizard not appearing**
+- The wizard only appears when the Cosmos DB `settings` container is empty or missing
+- Setup mode is detected automatically — no special environment flag is needed
+
+**Self-signed certificate warnings in development**
+- Expected behavior for local HTTPS. Accept the certificate in your browser or add it to your system trust store
+- See [Local HTTPS Certificates](/getting-started/quickstart) for certificate generation
+
+**`npm install` fails with peer dependency conflicts**
+- Use `npm install --legacy-peer-deps` to resolve conflicts from transitive dependencies
+
+**Azure AI Search returns 0 results with SharePoint ACL enabled**
+- The `user_impersonation` token must be passed with search requests. Verify the client app registration has the `https://search.azure.com/user_impersonation` delegated permission
+- Grant admin consent for the permission in Azure Portal
+
+**Bootstrap assets not appearing**
+- Navigate to **Admin → Bootstrap Assets** ([`#/admin/bootstrap`]) and click **Bootstrap All**
+- Bootstrap is no longer automatic on startup — it must be triggered manually by an admin
+
+### Health Checks
+
+The **Admin → Health** ([`#/admin/about`]) page provides real-time status for:
+- Azure Cosmos DB connectivity
+- Azure AI Search connectivity
+- Microsoft Graph API permissions (application and delegated)
+- LLM provider connectivity
+- OBO (On-Behalf-Of) scope availability
+
+Use this page as a first diagnostic step for any connectivity or permission issues.
