@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 264 64" role="img" aria-label="Findable">
+  <title>Findable</title>
+  <g transform="translate(0, 2) scale(0.9375)" aria-hidden="true">
+    <g fill="#f0f2f5" opacity="0.3">
+      <circle cx="54" cy="10" r="2.2"/>
+      <circle cx="21" cy="21" r="2.2"/>
+      <circle cx="32" cy="21" r="2.2"/>
+      <circle cx="43" cy="21" r="2.2"/>
+      <circle cx="54" cy="21" r="2.2"/>
+      <circle cx="43" cy="32" r="2.2"/>
+      <circle cx="54" cy="32" r="2.2"/>
+      <circle cx="21" cy="43" r="2.2"/>
+      <circle cx="32" cy="43" r="2.2"/>
+      <circle cx="43" cy="43" r="2.2"/>
+      <circle cx="54" cy="43" r="2.2"/>
+      <circle cx="21" cy="54" r="2.2"/>
+      <circle cx="32" cy="54" r="2.2"/>
+      <circle cx="43" cy="54" r="2.2"/>
+      <circle cx="54" cy="54" r="2.2"/>
+    </g>
+    <g fill="#f97316">
+      <circle cx="10" cy="10" r="3.2"/>
+      <circle cx="21" cy="10" r="3.2"/>
+      <circle cx="32" cy="10" r="3.2"/>
+      <circle cx="43" cy="10" r="3.2"/>
+      <circle cx="10" cy="21" r="3.2"/>
+      <circle cx="10" cy="32" r="3.2"/>
+      <circle cx="21" cy="32" r="3.2"/>
+      <circle cx="32" cy="32" r="3.2"/>
+      <circle cx="10" cy="43" r="3.2"/>
+      <circle cx="10" cy="54" r="3.2"/>
+    </g>
+  </g>
+  <g font-family="'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif" font-size="32" font-weight="600" text-anchor="middle">
+    <text x="80" y="26" fill="#f0f2f5">F</text>
+    <text x="95" y="26" fill="#f0f2f5">I</text>
+    <text x="112" y="26" fill="#f0f2f5">N</text>
+    <text x="135" y="26" fill="#f0f2f5">D</text>
+    <text x="161" y="26" fill="#f97316">A</text>
+    <text x="186" y="26" fill="#f0f2f5">B</text>
+    <text x="207" y="26" fill="#f0f2f5">L</text>
+    <text x="227" y="26" fill="#f0f2f5">E</text>
+  </g>
+  <g fill="#f97316">
+    <rect x="153" y="38" width="16" height="4"/>
+    <rect x="158.5" y="38" width="5" height="22"/>
+    <rect x="153" y="56" width="16" height="4"/>
+  </g>
+</svg>

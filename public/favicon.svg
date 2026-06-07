@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Findable">
+  <title>Findable</title>
+  <style>
+    .bg-dot { fill: #0f172a; opacity: 0.32; }
+    .f-dot  { fill: #ea580c; }
+    @media (prefers-color-scheme: dark) {
+      .bg-dot { fill: #f0f2f5; opacity: 0.3; }
+      .f-dot  { fill: #f97316; }
+    }
+  </style>
+  <g class="bg-dot">
+    <circle cx="54" cy="10" r="2.2"/>
+    <circle cx="21" cy="21" r="2.2"/>
+    <circle cx="32" cy="21" r="2.2"/>
+    <circle cx="43" cy="21" r="2.2"/>
+    <circle cx="54" cy="21" r="2.2"/>
+    <circle cx="43" cy="32" r="2.2"/>
+    <circle cx="54" cy="32" r="2.2"/>
+    <circle cx="21" cy="43" r="2.2"/>
+    <circle cx="32" cy="43" r="2.2"/>
+    <circle cx="43" cy="43" r="2.2"/>
+    <circle cx="54" cy="43" r="2.2"/>
+    <circle cx="21" cy="54" r="2.2"/>
+    <circle cx="32" cy="54" r="2.2"/>
+    <circle cx="43" cy="54" r="2.2"/>
+    <circle cx="54" cy="54" r="2.2"/>
+  </g>
+  <g class="f-dot">
+    <circle cx="10" cy="10" r="3.2"/>
+    <circle cx="21" cy="10" r="3.2"/>
+    <circle cx="32" cy="10" r="3.2"/>
+    <circle cx="43" cy="10" r="3.2"/>
+    <circle cx="10" cy="21" r="3.2"/>
+    <circle cx="10" cy="32" r="3.2"/>
+    <circle cx="21" cy="32" r="3.2"/>
+    <circle cx="32" cy="32" r="3.2"/>
+    <circle cx="10" cy="43" r="3.2"/>
+    <circle cx="10" cy="54" r="3.2"/>
+  </g>
+</svg>
