@@ -13,89 +13,98 @@
     "dark": "/logo/dark.svg"
   },
   "navigation": {
-    "groups": [
+    "tabs": [
       {
-        "group": "Getting Started",
-        "pages": [
-          "getting-started/quickstart",
-          "getting-started/setup-wizard",
-          "getting-started/prerequisites"
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "getting-started/quickstart",
+              "getting-started/setup-wizard",
+              "getting-started/prerequisites"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/cosmos-containers",
+              "architecture/hidden-settings"
+            ]
+          },
+          {
+            "group": "AI Providers & Models",
+            "pages": [
+              "ai-providers/providers-overview",
+              "ai-providers/model-versions",
+              "ai-providers/role-based-access"
+            ]
+          },
+          {
+            "group": "Data Sources",
+            "pages": [
+              "data-sources/datasource-catalog",
+              "data-sources/chat-with-your-data",
+              "data-sources/data-connections",
+              "data-sources/vector-store",
+              "data-sources/sharepoint",
+              "data-sources/onedrive"
+            ]
+          },
+          {
+            "group": "Flow Designer",
+            "pages": [
+              "flow-designer/flow-designer",
+              "flow-designer/flow-retriever"
+            ]
+          },
+          {
+            "group": "Forms & Prompts",
+            "pages": [
+              "forms-prompts/prompt-library"
+            ]
+          },
+          {
+            "group": "Tools & MCP",
+            "pages": [
+              "tools-mcp/tool-providers",
+              "tools-mcp/tool-setup",
+              "tools-mcp/web-search-rag",
+              "tools-mcp/memory-system"
+            ]
+          },
+          {
+            "group": "Access & Identity",
+            "pages": [
+              "access-identity/role-based-access",
+              "access-identity/entity-scopes",
+              "access-identity/chat-logging-audit",
+              "access-identity/azure-app-registration"
+            ]
+          },
+          {
+            "group": "Operations & Deployment",
+            "pages": [
+              "operations/production-deployment",
+              "operations/ci-cd",
+              "operations/capacity-limits",
+              "operations/notifications",
+              "operations/troubleshooting"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "meta/related-resources",
+              "meta/license"
+            ]
+          }
         ]
       },
       {
-        "group": "Architecture",
-        "pages": [
-          "architecture/overview",
-          "architecture/cosmos-containers",
-          "architecture/hidden-settings"
-        ]
-      },
-      {
-        "group": "AI Providers & Models",
-        "pages": [
-          "ai-providers/providers-overview",
-          "ai-providers/model-versions",
-          "ai-providers/role-based-access"
-        ]
-      },
-      {
-        "group": "Data Sources",
-        "pages": [
-          "data-sources/datasource-catalog",
-          "data-sources/chat-with-your-data",
-          "data-sources/data-connections",
-          "data-sources/vector-store",
-          "data-sources/sharepoint",
-          "data-sources/onedrive"
-        ]
-      },
-      {
-        "group": "Flow Designer",
-        "pages": [
-          "flow-designer/flow-designer",
-          "flow-designer/flow-retriever"
-        ]
-      },
-      {
-        "group": "Forms & Prompts",
-        "pages": [
-          "forms-prompts/prompt-library"
-        ]
-      },
-      {
-        "group": "Tools & MCP",
-        "pages": [
-          "tools-mcp/tool-providers",
-          "tools-mcp/tool-setup",
-          "tools-mcp/web-search-rag",
-          "tools-mcp/memory-system"
-        ]
-      },
-      {
-        "group": "Access & Identity",
-        "pages": [
-          "access-identity/role-based-access",
-          "access-identity/entity-scopes",
-          "access-identity/chat-logging-audit",
-          "access-identity/azure-app-registration"
-        ]
-      },
-      {
-        "group": "Operations & Deployment",
-        "pages": [
-          "operations/production-deployment",
-          "operations/ci-cd",
-          "operations/capacity-limits",
-          "operations/notifications",
-          "operations/troubleshooting"
-        ]
-      },
-      {
-        "group": "Reference",
-        "pages": [
-          "meta/related-resources",
-          "meta/license"
-        ]
+        "tab": "API Reference",
+        "openapi": "openapi.json"
       }
     ]
   },
