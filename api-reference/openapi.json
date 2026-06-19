@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Findable API",
-    "version": "3.2.29",
+    "version": "3.2.32",
     "description": "REST API for the Findable AI Assistant platform.\n\n## Authentication\n\nAll endpoints (except `/server/setup` and `/server/bootstrap`) require a valid **Azure AD / Entra ID Bearer token**.\n\n### Obtaining a token\n\n1. Register (or reuse) an **App Registration** in Azure Entra ID for your client.\n2. Under **API Permissions**, add a delegated permission for the Findable server app:\n   `api://<SERVER_CLIENT_ID>/User.Read`\n3. Acquire a token using MSAL (or any OAuth 2.0 library) with the following parameters:\n\n| Parameter | Value |\n|-----------|-------|\n| Authority | `https://login.microsoftonline.com/<TENANT_ID>` |\n| Client ID | Your client app registration ID |\n| Scope | `api://<SERVER_CLIENT_ID>/User.Read` |\n| Grant type | Authorization Code (interactive) or Client Credentials (daemon) |\n\n### Example (MSAL Node.js)\n\n```javascript\nconst { ConfidentialClientApplication } = require(\"@azure/msal-node\");\n\nconst cca = new ConfidentialClientApplication({\n  auth: {\n    clientId: \"<YOUR_CLIENT_ID>\",\n    authority: \"https://login.microsoftonline.com/<TENANT_ID>\",\n    clientSecret: \"<YOUR_CLIENT_SECRET>\",\n  },\n});\n\nconst result = await cca.acquireTokenByClientCredential({\n  scopes: [\"api://<SERVER_CLIENT_ID>/.default\"],\n});\n\n// Use result.accessToken in the Authorization header\n```\n\n### Using the token\n\nInclude the token in every request:\n```\nAuthorization: Bearer <access_token>\n```\n\n### Roles\n\nAccess is determined by Azure AD group membership configured in the application settings:\n- **Admin (Owner)**: Full access to all endpoints including admin operations\n- **Contributor**: Can create and manage chats, files, and content\n- **User**: Read access to entitled chats and resources\n",
     "contact": {
       "name": "Findable Support"
@@ -6549,8 +6549,8 @@
         "tags": [
           "Admin"
         ],
-        "summary": "Migrate embedding configurations (admin)",
-        "description": "Migrates legacy embedding configurations to model registry references. Use dryRun=true for preview.",
+        "summary": "Migrate embedding configurations — upgrade from v3.1.0 or earlier (admin)",
+        "description": "Migrates legacy inline textEmbedding* fields on AI Search Endpoints to model-registry references (textEmbeddingModelEndpointId). Only relevant when upgrading from v3.1.0 or earlier. Use dryRun=true for a preview without making changes.\n",
         "parameters": [
           {
             "in": "query",
@@ -6687,6 +6687,40 @@
         ],
         "summary": "Strip pre-multi-source legacy fields from chatlog records (admin)",
         "description": "Removes top-level `selectedFolder` (and other pre-multi-source dead fields) from chatlog documents in the `chatlog` Cosmos container. Functionally cosmetic — rendering and rehydration of legacy chatlogs already work without this migration. Use dryRun=true for preview.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "dryRun",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "description": "Preview changes without applying them"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Migration result with summary and details"
+          },
+          "403": {
+            "description": "Admin privileges required"
+          },
+          "500": {
+            "description": "Migration failed"
+          }
+        }
+      }
+    },
+    "/admin/migrations/chat-datasource-links": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Backfill datasourceId catalog links on chat dataSources[] entries (admin)",
+        "description": "Legacy chats carry dataSources[] entries without a `datasourceId` FK to the built-in datasource catalog, so the security guard skips catalog enhancement (e.g. WEB_SEARCH provider inheritance). This migration backfills the FK for singleton built-in types (LLM_KNOWLEDGE, WORKSPACE, SHARED, PERSONAL, WEB_SEARCH). Use dryRun=true for preview.",
         "parameters": [
           {
             "in": "query",
@@ -9200,6 +9234,58 @@
         }
       }
     },
+    "/chats/{id}/migrate-scope": {
+      "post": {
+        "tags": [
+          "Chats"
+        ],
+        "summary": "Migrate a chat to a different scope",
+        "description": "Promote-only (personal -> shared). Scope cannot be changed via the normal PUT/PATCH; this is the only path. Requires owner/admin and that migration is enabled for chats. Chats are leaves, so there is no descendant cascade.\n",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "shared"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Migration applied (or no-op if already at target scope)"
+          },
+          "400": {
+            "description": "Invalid scope transition"
+          },
+          "403": {
+            "description": "Migration not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/chats/{id}/copy": {
       "post": {
         "tags": [
@@ -9437,6 +9523,57 @@
           },
           "403": {
             "description": "Access denied or cannot delete built-in datasource"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/datasources/{id}/migrate-scope": {
+      "post": {
+        "tags": [
+          "Datasources"
+        ],
+        "summary": "Migrate a datasource to a different scope",
+        "description": "Promote-only (personal -> shared). Scope cannot be changed via the normal PUT; this is the only path. Requires owner/admin and that migration is enabled for datasources. Datasources are flat, so there is no descendant cascade.\n",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "shared"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Migration applied (or no-op if already at target scope)"
+          },
+          "400": {
+            "description": "Invalid scope transition"
+          },
+          "403": {
+            "description": "Migration not allowed"
           },
           "404": {
             "description": "Not found"
@@ -10514,6 +10651,58 @@
           },
           "403": {
             "description": "Access denied"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
+    "/flows/{id}/migrate-scope": {
+      "post": {
+        "tags": [
+          "Flows"
+        ],
+        "summary": "Migrate a flow or flow group to a different scope",
+        "description": "Promote-only (personal -> shared). Cascades the new scope to all descendants so children are never orphaned. Scope cannot be changed via the normal PUT/PATCH; this is the only path. Requires owner/admin and that migration is enabled for the entity type.\n",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "shared"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Migration applied (or no-op if already at target scope)"
+          },
+          "400": {
+            "description": "Invalid scope transition"
+          },
+          "403": {
+            "description": "Migration not allowed"
           },
           "404": {
             "description": "Not found"
@@ -11918,6 +12107,57 @@
         }
       }
     },
+    "/pages/{id}/migrate-scope": {
+      "post": {
+        "tags": [
+          "Pages"
+        ],
+        "summary": "Migrate a page to a different scope",
+        "description": "Promote-only (personal -> shared). Cascades the new scope to all descendant pages AND owned chats so children are never orphaned. Scope cannot be changed via the normal PUT/PATCH; this is the only path. Requires owner/admin and that migration is enabled for pages.\n",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "shared"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Migration applied (or no-op if already at target scope)"
+          },
+          "400": {
+            "description": "Invalid scope transition"
+          },
+          "403": {
+            "description": "Migration not allowed"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      }
+    },
     "/prompts": {
       "get": {
         "tags": [
@@ -12073,6 +12313,57 @@
           },
           "403": {
             "description": "Access denied"
+          }
+        }
+      }
+    },
+    "/prompts/{id}/migrate-scope": {
+      "post": {
+        "tags": [
+          "Prompts"
+        ],
+        "summary": "Migrate a prompt or group to a different scope",
+        "description": "Promote-only (personal -> shared). Cascades the new scope to all descendants so children are never orphaned. Scope cannot be changed via the normal PUT; this is the only path. Requires owner/admin and that migration is enabled for the entity type.\n",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "shared"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Migration applied (or no-op if already at target scope)"
+          },
+          "400": {
+            "description": "Invalid scope transition"
+          },
+          "403": {
+            "description": "Migration not allowed"
+          },
+          "404": {
+            "description": "Not found"
           }
         }
       }
@@ -17267,6 +17558,71 @@
           },
           "400": {
             "description": "Missing query"
+          }
+        }
+      }
+    },
+    "/user/memories/purge": {
+      "delete": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Purge the entire memory database (admin only)",
+        "description": "Destructively wipes ALL memories for ALL users and scopes from the configured\nmemory provider. For the self-hosted (OSS) provider this deletes the underlying\nSQLite database files (vector store + history); for the Cloud provider it removes\nevery user and their memories. This action is irreversible and restricted to\nadministrators. The store is automatically recreated empty on the next operation.\n",
+        "responses": {
+          "200": {
+            "description": "Memory database purged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Memory database purged successfully"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Admin access required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "example": "Only administrators can purge the memory database"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Failed to purge memory database",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
