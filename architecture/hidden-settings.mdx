@@ -8,12 +8,20 @@ These settings are not exposed in the admin UI. They can be set directly in the 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `enablePremium` | `boolean` | `false` | Gates premium features: Flow Designer, SQL Connections, Tools Registry, MCP, and Notifications. |
+| `topNDocumentsLimit` | `number` | `50` | Upper bound for prompt-document counts. Governs the **Top N Documents** slider max (chat AI options, profile AI options, Admin → AI defaults), the per-source **Max results** stepper in the source editors, and the server-side `maxResults` clamp in the datasource security guard. Raise as model context windows grow. |
+| `maxTokensLimit` | `number` | `32768` | Upper bound for response token counts. Governs the **Max Tokens** slider max (chat AI options, profile AI options, Admin → AI defaults, chat edit form validation) and the server-side cap applied in the LLM factory for every provider. Raise as model output limits grow. |
+
+The AI limits exist because model capabilities keep growing — instead of hardcoded caps scattered across the UI and server, each ceiling is one settings value that the client sliders and server clamps all honor. Effective values still resolve through the normal chains (request → model endpoint → app settings defaults); the limits only cap them. See the AI options resolution design in the platform repo for details.
 
 To modify a hidden setting, edit the settings document directly in Cosmos DB Data Explorer:
 
 ```json
 {
   "id": "default",
-  "enablePremium": true
+  "enablePremium": true,
+  "topNDocumentsLimit": 200,
+  "maxTokensLimit": 65536
 }
 ```
+
+Hidden settings survive admin-UI saves (the admin pages PATCH only the fields they own). After editing the document, reload settings without a restart via `POST /server/settings/refresh-appsettings` (admin only), or restart the app service.
