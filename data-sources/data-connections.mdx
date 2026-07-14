@@ -14,15 +14,26 @@ All connections are managed through the unified `IDataConnection` interface (`Da
 | **[PostgreSQL](https://www.postgresql.org/)** | `postgres` | `pg` | Including Azure Database for PostgreSQL |
 | **[SQL Server](https://learn.microsoft.com/en-us/sql/sql-server/)** | `mssql` | `mssql` | Including Azure SQL Database |
 | **[MySQL](https://dev.mysql.com/)** | `mysql` | `mysql2` | Including Azure Database for MySQL |
+| **[MariaDB](https://mariadb.org/)** | `mariadb` | `mysql2` | MySQL-compatible |
 | **[Oracle](https://www.oracle.com/database/)** | `oracle` | `oracledb` | Oracle Database 12c+ |
+| **[IBM DB2](https://www.ibm.com/db2)** | `db2` | `ibm_db` | Enterprise database |
+| **[SQLite](https://www.sqlite.org/)** | `sqlite` | `better-sqlite3` | File-based / embedded |
+| **[SAP HANA](https://www.sap.com/products/technology-platform/hana.html)** | `hana` | `@sap/hana-client` | In-memory column store |
+| **[DuckDB](https://duckdb.org/)** | `duckdb` | `@duckdb/node-api` | Embedded analytical (OLAP) |
+| **[Supabase](https://supabase.com/)** | `supabase` | `pg` | PostgreSQL-backed |
 | **[Snowflake](https://app.snowflake.com/)** | `snowflake` | `snowflake-sdk` | Cloud data warehouse |
+| **[Databricks](https://www.databricks.com/)** | `databricks` | `databricks-sql` | Lakehouse / SQL warehouse |
 | **[BigQuery](https://console.cloud.google.com/bigquery)** | `bigquery` | `@google-cloud/bigquery` | Google Cloud analytics |
 | **[Amazon Athena](https://console.aws.amazon.com/athena/)** | `athena` | `@aws-sdk/client-athena` | Serverless query service |
 | **[ClickHouse](https://clickhouse.cloud/)** | `clickhouse` | `@clickhouse/client` | Column-oriented OLAP |
-| **[IBM DB2](https://www.ibm.com/db2)** | `db2` | `ibm_db` | Enterprise database (see [DB2 Guide](/docs/db2-support.md)) |
-| **[Azure Cosmos DB](https://portal.azure.com/#browse/Microsoft.DocumentDB%2FdatabaseAccounts)** | `cosmosdb` | `@azure/cosmos` | NoSQL document database |
-| **[Databricks](https://www.databricks.com/)** | `databricks` | `databricks-sql` | Lakehouse / SQL warehouse |
 | **[Trino](https://trino.io/)** | `trino` | `trino-client` | Distributed SQL query engine |
+| **[Azure Data Explorer](https://azure.microsoft.com/products/data-explorer)** | `adx` | `azure-kusto-data` | Kusto (KQL) analytics |
+| **[Azure Cosmos DB](https://portal.azure.com/#browse/Microsoft.DocumentDB%2FdatabaseAccounts)** | `cosmosdb` | `@azure/cosmos` | NoSQL document database |
+| **[MongoDB](https://www.mongodb.com/)** | `mongodb` | `mongodb` | NoSQL document database |
+| **[Amazon DynamoDB](https://aws.amazon.com/dynamodb/)** | `dynamodb` | `@aws-sdk/client-dynamodb` | Serverless key-value / document |
+| **[Apache Cassandra](https://cassandra.apache.org/)** | `cassandra` | `cassandra-driver` | Wide-column NoSQL |
+| **[Apache CouchDB](https://couchdb.apache.org/)** | `couchdb` | `nano` | Document database |
+| **[Firebase (Firestore)](https://firebase.google.com/products/firestore)** | `firebase` | `@google-cloud/firestore` | Serverless document database |
 
 ### Supported Vector Stores
 
@@ -36,6 +47,14 @@ All connections are managed through the unified `IDataConnection` interface (`Da
 | **[OpenSearch](https://opensearch.org/)** | `opensearch` | AWS-managed search and analytics |
 | **[pgvector](https://github.com/pgvector/pgvector)** | `pgvector` | PostgreSQL vector extension |
 | **[Redis](https://redis.io/)** | `redis` | In-memory vector search |
+| **[Milvus](https://milvus.io/)** | `milvus` | Open-source vector database (`@zilliz/milvus2-sdk-node`) |
+| **[MongoDB Atlas](https://www.mongodb.com/products/platform/atlas-vector-search)** | `mongodb_atlas` | Atlas Vector Search |
+| **[Vertex AI Vector Search](https://cloud.google.com/vertex-ai/docs/vector-search/overview)** | `vertex_ai_search` | Google Cloud (`@google-cloud/aiplatform`) |
+| **[Amazon Kendra](https://aws.amazon.com/kendra/)** | `aws_kendra` | Managed enterprise search (`@aws-sdk/client-kendra`) |
+| **[Oracle Vector Search](https://www.oracle.com/database/vector-database/)** | `oracle_vector` | Oracle Database 23ai vectors |
+| **[Vespa](https://vespa.ai/)** | `vespa` | Search + vector serving engine |
+| **[LanceDB](https://lancedb.com/)** | `lancedb` | Embedded vector database (`@lancedb/lancedb`) |
+| **[Marqo](https://www.marqo.ai/)** | `marqo` | End-to-end vector search |
 
 > Vector store connections are used by the **Vector Retriever** data source type and **Flow Designer** vector store tool nodes. See [Vector Store Integration](/data-sources/vector-store) for details.
 
@@ -95,6 +114,20 @@ await executeNaturalLanguageQuery({
 | **ClickHouse** | `@clickhouse/client` | `^1.18.2` |
 | **BigQuery** | `@google-cloud/bigquery` | `^8.1.1` |
 | **Athena** | `@aws-sdk/client-athena` | `^3.1015.0` |
+| **MariaDB** | `mysql2` | `^3.22.3` |
+| **SQLite** | `better-sqlite3` | (`@types/better-sqlite3` `^7.6.13`) |
+| **SAP HANA** | `@sap/hana-client` | `^2.29.25` |
+| **DuckDB** | `@duckdb/node-api` | `^1.5.4-r.1` |
+| **Azure Data Explorer** | `azure-kusto-data` | `^7.2.0` |
+| **MongoDB / MongoDB Atlas** | `mongodb` | `^7.5.0` |
+| **DynamoDB** | `@aws-sdk/client-dynamodb` | `^3.1083.0` |
+| **Cassandra** | `cassandra-driver` | `^4.9.0` |
+| **CouchDB** | `nano` | `^11.0.6` |
+| **Firebase (Firestore)** | `@google-cloud/firestore` | `^8.6.0` |
+| **Milvus** | `@zilliz/milvus2-sdk-node` | `^3.0.3` |
+| **Amazon Kendra** | `@aws-sdk/client-kendra` | `^3.1084.0` |
+| **Vertex AI** | `@google-cloud/aiplatform` | `^6.8.1` |
+| **LanceDB** | `@lancedb/lancedb` | `^0.31.0` |
 
 ### Recharts Visualizations
 

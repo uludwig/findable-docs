@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Findable API",
-    "version": "3.2.37",
+    "version": "3.2.38",
     "description": "REST API for the Findable AI Assistant platform.\n\n## Authentication\n\nAll endpoints (except `/server/setup` and `/server/bootstrap`) require a valid **Azure AD / Entra ID Bearer token**.\n\n### Obtaining a token\n\n1. Register (or reuse) an **App Registration** in Azure Entra ID for your client.\n2. Under **API Permissions**, add a delegated permission for the Findable server app:\n   `api://<SERVER_CLIENT_ID>/User.Read`\n3. Acquire a token using MSAL (or any OAuth 2.0 library) with the following parameters:\n\n| Parameter | Value |\n|-----------|-------|\n| Authority | `https://login.microsoftonline.com/<TENANT_ID>` |\n| Client ID | Your client app registration ID |\n| Scope | `api://<SERVER_CLIENT_ID>/User.Read` |\n| Grant type | Authorization Code (interactive) or Client Credentials (daemon) |\n\n### Example (MSAL Node.js)\n\n```javascript\nconst { ConfidentialClientApplication } = require(\"@azure/msal-node\");\n\nconst cca = new ConfidentialClientApplication({\n  auth: {\n    clientId: \"<YOUR_CLIENT_ID>\",\n    authority: \"https://login.microsoftonline.com/<TENANT_ID>\",\n    clientSecret: \"<YOUR_CLIENT_SECRET>\",\n  },\n});\n\nconst result = await cca.acquireTokenByClientCredential({\n  scopes: [\"api://<SERVER_CLIENT_ID>/.default\"],\n});\n\n// Use result.accessToken in the Authorization header\n```\n\n### Using the token\n\nInclude the token in every request:\n```\nAuthorization: Bearer <access_token>\n```\n\n### Roles\n\nAccess is determined by Azure AD group membership configured in the application settings:\n- **Admin (Owner)**: Full access to all endpoints including admin operations\n- **Contributor**: Can create and manage chats, files, and content\n- **User**: Read access to entitled chats and resources\n",
     "contact": {
       "name": "Findable Support"
@@ -1358,6 +1358,852 @@
         "additionalProperties": false,
         "title": "Chat",
         "description": "Chat tab configuration with multi-source RAG, ACL, and feature flags"
+      },
+      "ChatLog": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Chat log ID (UUID)"
+          },
+          "email": {
+            "type": "string",
+            "description": "Owner's email / UPN (Cosmos partition key). Always set server-side from the authenticated user."
+          },
+          "chatHistory": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "role": {
+                  "type": "string",
+                  "enum": [
+                    "system",
+                    "user",
+                    "assistant"
+                  ],
+                  "description": "OpenAI-style message role"
+                },
+                "content": {
+                  "type": "string"
+                },
+                "citations": {
+                  "description": "Citation references attached to an assistant message",
+                  "nullable": true,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "timestamp": {
+                  "description": "Unix timestamp in milliseconds",
+                  "type": "integer"
+                },
+                "messageType": {
+                  "description": "Rich message kind (default: message)",
+                  "type": "string",
+                  "enum": [
+                    "message",
+                    "human_input_prompt",
+                    "prompt_response",
+                    "inline_buttons",
+                    "message_notification",
+                    "sources_unavailable"
+                  ]
+                },
+                "humanInputData": {
+                  "description": "Human-input request payload (when messageType === human_input_prompt)",
+                  "type": "object",
+                  "additionalProperties": {}
+                },
+                "promptResponseData": {
+                  "description": "Submitted prompt response (when messageType === prompt_response)",
+                  "type": "object",
+                  "additionalProperties": {}
+                },
+                "toolActivities": {
+                  "description": "Tool call activity persisted by the flow engine",
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": {}
+                  }
+                },
+                "thinkingText": {
+                  "description": "Model reasoning text captured during generation",
+                  "type": "string"
+                },
+                "scopedChatData": {
+                  "description": "Scoped-chat context payload",
+                  "type": "object",
+                  "additionalProperties": {}
+                },
+                "inlineButtonsData": {
+                  "description": "Inline button definitions (when messageType === inline_buttons)",
+                  "type": "object",
+                  "additionalProperties": {}
+                },
+                "messageNotificationData": {
+                  "description": "Notification payload (when messageType === message_notification)",
+                  "type": "object",
+                  "additionalProperties": {}
+                },
+                "workflowInvitationData": {
+                  "description": "Workflow invitation card data",
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "started": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "title"
+                  ],
+                  "additionalProperties": false
+                },
+                "entryPromptData": {
+                  "description": "Entry prompt form data for flow-variable collection",
+                  "type": "object",
+                  "properties": {
+                    "prompt": {
+                      "description": "Prompt template shown as the entry form"
+                    },
+                    "isReminder": {
+                      "type": "boolean"
+                    },
+                    "filledValues": {
+                      "nullable": true,
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "role",
+                "content"
+              ],
+              "additionalProperties": false,
+              "title": "ChatLogMessage",
+              "description": "A single persisted message within a chat log"
+            },
+            "description": "Ordered conversation messages"
+          },
+          "title": {
+            "description": "AI-generated title for the chat session (generated asynchronously after create/update)",
+            "type": "string"
+          },
+          "chatTitle": {
+            "description": "Parent chat name (e.g. \"My Workspace\" for personal, chat tab title for shared)",
+            "type": "string"
+          },
+          "dataSourceName": {
+            "type": "string",
+            "description": "Display name of the data source at log-write time"
+          },
+          "dataSourceType": {
+            "type": "string",
+            "description": "DATASOURCE_TYPE at log-write time (shared, personal, workspace, sharepoint, ...)"
+          },
+          "dataSourceId": {
+            "type": "string"
+          },
+          "chatId": {
+            "type": "string",
+            "description": "Source chat ID — ephemeral workspace session ID for workspace chats, persisted chat ID for shared chats"
+          },
+          "isWorkspace": {
+            "description": "True when produced by the ephemeral cross-chat workspace session — authoritative chat-kind signal on rehydrate",
+            "type": "boolean"
+          },
+          "aiOptions": {
+            "type": "object",
+            "properties": {
+              "maxTokens": {
+                "type": "integer"
+              },
+              "topP": {
+                "type": "number"
+              },
+              "temperature": {
+                "type": "number"
+              },
+              "topNDocuments": {
+                "type": "integer"
+              },
+              "systemPrompt": {
+                "type": "string"
+              },
+              "filter": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "title": "ChatLogAIOptions",
+            "description": "AI inference options captured at log-write time"
+          },
+          "hasHumanInput": {
+            "description": "True if any message is human_input_prompt or prompt_response",
+            "type": "boolean"
+          },
+          "humanInputCount": {
+            "description": "Count of prompt_response messages",
+            "type": "integer"
+          },
+          "promptIds": {
+            "description": "All promptTemplateIds referenced in this chat log",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "createdAt": {
+            "description": "ISO-8601 creation timestamp (set server-side)",
+            "type": "string"
+          },
+          "updatedAt": {
+            "description": "ISO-8601 update timestamp (set server-side)",
+            "type": "string"
+          },
+          "_ts": {
+            "description": "Cosmos DB last-modified timestamp (epoch seconds)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "chatHistory",
+          "dataSourceName",
+          "dataSourceType",
+          "dataSourceId",
+          "chatId",
+          "aiOptions"
+        ],
+        "additionalProperties": false,
+        "title": "ChatLog",
+        "description": "A persisted chat session (conversation transcript + source/AI metadata)"
+      },
+      "ChatLogMessage": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "system",
+              "user",
+              "assistant"
+            ],
+            "description": "OpenAI-style message role"
+          },
+          "content": {
+            "type": "string"
+          },
+          "citations": {
+            "description": "Citation references attached to an assistant message",
+            "nullable": true,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "timestamp": {
+            "description": "Unix timestamp in milliseconds",
+            "type": "integer"
+          },
+          "messageType": {
+            "description": "Rich message kind (default: message)",
+            "type": "string",
+            "enum": [
+              "message",
+              "human_input_prompt",
+              "prompt_response",
+              "inline_buttons",
+              "message_notification",
+              "sources_unavailable"
+            ]
+          },
+          "humanInputData": {
+            "description": "Human-input request payload (when messageType === human_input_prompt)",
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "promptResponseData": {
+            "description": "Submitted prompt response (when messageType === prompt_response)",
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "toolActivities": {
+            "description": "Tool call activity persisted by the flow engine",
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": {}
+            }
+          },
+          "thinkingText": {
+            "description": "Model reasoning text captured during generation",
+            "type": "string"
+          },
+          "scopedChatData": {
+            "description": "Scoped-chat context payload",
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "inlineButtonsData": {
+            "description": "Inline button definitions (when messageType === inline_buttons)",
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "messageNotificationData": {
+            "description": "Notification payload (when messageType === message_notification)",
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "workflowInvitationData": {
+            "description": "Workflow invitation card data",
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "started": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "title"
+            ],
+            "additionalProperties": false
+          },
+          "entryPromptData": {
+            "description": "Entry prompt form data for flow-variable collection",
+            "type": "object",
+            "properties": {
+              "prompt": {
+                "description": "Prompt template shown as the entry form"
+              },
+              "isReminder": {
+                "type": "boolean"
+              },
+              "filledValues": {
+                "nullable": true,
+                "type": "object",
+                "additionalProperties": {}
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ],
+        "additionalProperties": false,
+        "title": "ChatLogMessage",
+        "description": "A single persisted message within a chat log"
+      },
+      "ChatLogAIOptions": {
+        "type": "object",
+        "properties": {
+          "maxTokens": {
+            "type": "integer"
+          },
+          "topP": {
+            "type": "number"
+          },
+          "temperature": {
+            "type": "number"
+          },
+          "topNDocuments": {
+            "type": "integer"
+          },
+          "systemPrompt": {
+            "type": "string"
+          },
+          "filter": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "title": "ChatLogAIOptions",
+        "description": "AI inference options captured at log-write time"
+      },
+      "ChatLogSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "chatId": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "description": "AI-generated title, or first user message truncated to 100 chars"
+          },
+          "chatTitle": {
+            "description": "Parent chat name (user endpoint only)",
+            "type": "string"
+          },
+          "dataSourceId": {
+            "type": "string"
+          },
+          "dataSourceType": {
+            "type": "string"
+          },
+          "dataSourceName": {
+            "description": "Data source display name (admin endpoint only)",
+            "type": "string"
+          },
+          "isWorkspace": {
+            "type": "boolean",
+            "description": "True for ephemeral cross-chat workspace sessions"
+          },
+          "messageCount": {
+            "type": "integer"
+          },
+          "timestamp": {
+            "type": "integer",
+            "description": "Cosmos _ts (epoch seconds)"
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "ISO-8601 creation timestamp derived from _ts"
+          }
+        },
+        "required": [
+          "id",
+          "chatId",
+          "email",
+          "title",
+          "dataSourceId",
+          "dataSourceType",
+          "isWorkspace",
+          "messageCount",
+          "timestamp",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "title": "ChatLogSummary",
+        "description": "Lightweight chat log summary for tables and sidebars"
+      },
+      "ChatLogsResponse": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Chat log ID (UUID)"
+                },
+                "email": {
+                  "type": "string",
+                  "description": "Owner's email / UPN (Cosmos partition key). Always set server-side from the authenticated user."
+                },
+                "chatHistory": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "system",
+                          "user",
+                          "assistant"
+                        ],
+                        "description": "OpenAI-style message role"
+                      },
+                      "content": {
+                        "type": "string"
+                      },
+                      "citations": {
+                        "description": "Citation references attached to an assistant message",
+                        "nullable": true,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "timestamp": {
+                        "description": "Unix timestamp in milliseconds",
+                        "type": "integer"
+                      },
+                      "messageType": {
+                        "description": "Rich message kind (default: message)",
+                        "type": "string",
+                        "enum": [
+                          "message",
+                          "human_input_prompt",
+                          "prompt_response",
+                          "inline_buttons",
+                          "message_notification",
+                          "sources_unavailable"
+                        ]
+                      },
+                      "humanInputData": {
+                        "description": "Human-input request payload (when messageType === human_input_prompt)",
+                        "type": "object",
+                        "additionalProperties": {}
+                      },
+                      "promptResponseData": {
+                        "description": "Submitted prompt response (when messageType === prompt_response)",
+                        "type": "object",
+                        "additionalProperties": {}
+                      },
+                      "toolActivities": {
+                        "description": "Tool call activity persisted by the flow engine",
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "additionalProperties": {}
+                        }
+                      },
+                      "thinkingText": {
+                        "description": "Model reasoning text captured during generation",
+                        "type": "string"
+                      },
+                      "scopedChatData": {
+                        "description": "Scoped-chat context payload",
+                        "type": "object",
+                        "additionalProperties": {}
+                      },
+                      "inlineButtonsData": {
+                        "description": "Inline button definitions (when messageType === inline_buttons)",
+                        "type": "object",
+                        "additionalProperties": {}
+                      },
+                      "messageNotificationData": {
+                        "description": "Notification payload (when messageType === message_notification)",
+                        "type": "object",
+                        "additionalProperties": {}
+                      },
+                      "workflowInvitationData": {
+                        "description": "Workflow invitation card data",
+                        "type": "object",
+                        "properties": {
+                          "title": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "started": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "title"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "entryPromptData": {
+                        "description": "Entry prompt form data for flow-variable collection",
+                        "type": "object",
+                        "properties": {
+                          "prompt": {
+                            "description": "Prompt template shown as the entry form"
+                          },
+                          "isReminder": {
+                            "type": "boolean"
+                          },
+                          "filledValues": {
+                            "nullable": true,
+                            "type": "object",
+                            "additionalProperties": {}
+                          }
+                        },
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "role",
+                      "content"
+                    ],
+                    "additionalProperties": false,
+                    "title": "ChatLogMessage",
+                    "description": "A single persisted message within a chat log"
+                  },
+                  "description": "Ordered conversation messages"
+                },
+                "title": {
+                  "description": "AI-generated title for the chat session (generated asynchronously after create/update)",
+                  "type": "string"
+                },
+                "chatTitle": {
+                  "description": "Parent chat name (e.g. \"My Workspace\" for personal, chat tab title for shared)",
+                  "type": "string"
+                },
+                "dataSourceName": {
+                  "type": "string",
+                  "description": "Display name of the data source at log-write time"
+                },
+                "dataSourceType": {
+                  "type": "string",
+                  "description": "DATASOURCE_TYPE at log-write time (shared, personal, workspace, sharepoint, ...)"
+                },
+                "dataSourceId": {
+                  "type": "string"
+                },
+                "chatId": {
+                  "type": "string",
+                  "description": "Source chat ID — ephemeral workspace session ID for workspace chats, persisted chat ID for shared chats"
+                },
+                "isWorkspace": {
+                  "description": "True when produced by the ephemeral cross-chat workspace session — authoritative chat-kind signal on rehydrate",
+                  "type": "boolean"
+                },
+                "aiOptions": {
+                  "type": "object",
+                  "properties": {
+                    "maxTokens": {
+                      "type": "integer"
+                    },
+                    "topP": {
+                      "type": "number"
+                    },
+                    "temperature": {
+                      "type": "number"
+                    },
+                    "topNDocuments": {
+                      "type": "integer"
+                    },
+                    "systemPrompt": {
+                      "type": "string"
+                    },
+                    "filter": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "title": "ChatLogAIOptions",
+                  "description": "AI inference options captured at log-write time"
+                },
+                "hasHumanInput": {
+                  "description": "True if any message is human_input_prompt or prompt_response",
+                  "type": "boolean"
+                },
+                "humanInputCount": {
+                  "description": "Count of prompt_response messages",
+                  "type": "integer"
+                },
+                "promptIds": {
+                  "description": "All promptTemplateIds referenced in this chat log",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "createdAt": {
+                  "description": "ISO-8601 creation timestamp (set server-side)",
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "description": "ISO-8601 update timestamp (set server-side)",
+                  "type": "string"
+                },
+                "_ts": {
+                  "description": "Cosmos DB last-modified timestamp (epoch seconds)",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "email",
+                "chatHistory",
+                "dataSourceName",
+                "dataSourceType",
+                "dataSourceId",
+                "chatId",
+                "aiOptions"
+              ],
+              "additionalProperties": false,
+              "title": "ChatLog",
+              "description": "A persisted chat session (conversation transcript + source/AI metadata)"
+            },
+            "description": "Full chat log documents for rehydration (empty when summariesOnly=true)"
+          },
+          "summaries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "chatId": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string",
+                  "description": "AI-generated title, or first user message truncated to 100 chars"
+                },
+                "chatTitle": {
+                  "description": "Parent chat name (user endpoint only)",
+                  "type": "string"
+                },
+                "dataSourceId": {
+                  "type": "string"
+                },
+                "dataSourceType": {
+                  "type": "string"
+                },
+                "dataSourceName": {
+                  "description": "Data source display name (admin endpoint only)",
+                  "type": "string"
+                },
+                "isWorkspace": {
+                  "type": "boolean",
+                  "description": "True for ephemeral cross-chat workspace sessions"
+                },
+                "messageCount": {
+                  "type": "integer"
+                },
+                "timestamp": {
+                  "type": "integer",
+                  "description": "Cosmos _ts (epoch seconds)"
+                },
+                "createdAt": {
+                  "type": "string",
+                  "description": "ISO-8601 creation timestamp derived from _ts"
+                }
+              },
+              "required": [
+                "id",
+                "chatId",
+                "email",
+                "title",
+                "dataSourceId",
+                "dataSourceType",
+                "isWorkspace",
+                "messageCount",
+                "timestamp",
+                "createdAt"
+              ],
+              "additionalProperties": false,
+              "title": "ChatLogSummary",
+              "description": "Lightweight chat log summary for tables and sidebars"
+            },
+            "description": "Table-ready summaries for the same page of results"
+          },
+          "pagination": {
+            "type": "object",
+            "properties": {
+              "currentPage": {
+                "type": "integer"
+              },
+              "pageSize": {
+                "type": "integer"
+              },
+              "totalCount": {
+                "type": "integer"
+              },
+              "totalPages": {
+                "type": "integer"
+              },
+              "hasNextPage": {
+                "type": "boolean"
+              },
+              "hasPreviousPage": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "currentPage",
+              "pageSize",
+              "totalCount",
+              "totalPages",
+              "hasNextPage",
+              "hasPreviousPage"
+            ],
+            "additionalProperties": false
+          },
+          "filterOptions": {
+            "nullable": true,
+            "description": "Dropdown filter options (null when summariesOnly=true)",
+            "type": "object",
+            "properties": {
+              "dataSourceTypes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Distinct data source types for dropdowns"
+              },
+              "dataSourceNames": {
+                "description": "Distinct data source names (admin endpoint only)",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "userEmails": {
+                "description": "Distinct user emails (admin endpoint only)",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "chats": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "dataSourceType": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title"
+                  ],
+                  "additionalProperties": false
+                },
+                "description": "Available chats for filtering"
+              }
+            },
+            "required": [
+              "dataSourceTypes",
+              "chats"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "data",
+          "summaries",
+          "pagination",
+          "filterOptions"
+        ],
+        "additionalProperties": false,
+        "title": "ChatLogsResponse",
+        "description": "Paginated chat log list response (full documents + summaries + filter options)"
       },
       "AIGeneratorRequest": {
         "type": "object",
@@ -2737,6 +3583,1582 @@
         "additionalProperties": false,
         "title": "ToolProviderConfig",
         "description": "Custom tool provider registration"
+      },
+      "ToolConfigUpdateResult": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "config": {
+            "description": "Updated provider config (sanitized) — present on success",
+            "type": "object",
+            "properties": {
+              "scope": {
+                "description": "Access control model",
+                "type": "string",
+                "enum": [
+                  "personal",
+                  "shared"
+                ]
+              },
+              "createdBy": {
+                "description": "UPN of the creator",
+                "type": "string"
+              },
+              "isPublic": {
+                "description": "Allow public read access",
+                "type": "boolean"
+              },
+              "owners": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "group",
+                        "user"
+                      ]
+                    },
+                    "displayName": {
+                      "type": "string"
+                    },
+                    "mail": {
+                      "type": "string"
+                    },
+                    "securityEnabled": {
+                      "type": "boolean"
+                    },
+                    "mailEnabled": {
+                      "type": "boolean"
+                    },
+                    "groupTypes": {
+                      "nullable": true,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "groupType": {
+                      "type": "string"
+                    },
+                    "userPrincipalName": {
+                      "type": "string"
+                    },
+                    "jobTitle": {
+                      "type": "string"
+                    },
+                    "department": {
+                      "type": "string"
+                    },
+                    "officeLocation": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "type"
+                  ],
+                  "additionalProperties": {}
+                }
+              },
+              "contributors": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "group",
+                        "user"
+                      ]
+                    },
+                    "displayName": {
+                      "type": "string"
+                    },
+                    "mail": {
+                      "type": "string"
+                    },
+                    "securityEnabled": {
+                      "type": "boolean"
+                    },
+                    "mailEnabled": {
+                      "type": "boolean"
+                    },
+                    "groupTypes": {
+                      "nullable": true,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "groupType": {
+                      "type": "string"
+                    },
+                    "userPrincipalName": {
+                      "type": "string"
+                    },
+                    "jobTitle": {
+                      "type": "string"
+                    },
+                    "department": {
+                      "type": "string"
+                    },
+                    "officeLocation": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "type"
+                  ],
+                  "additionalProperties": {}
+                }
+              },
+              "users": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "group",
+                        "user"
+                      ]
+                    },
+                    "displayName": {
+                      "type": "string"
+                    },
+                    "mail": {
+                      "type": "string"
+                    },
+                    "securityEnabled": {
+                      "type": "boolean"
+                    },
+                    "mailEnabled": {
+                      "type": "boolean"
+                    },
+                    "groupTypes": {
+                      "nullable": true,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "groupType": {
+                      "type": "string"
+                    },
+                    "userPrincipalName": {
+                      "type": "string"
+                    },
+                    "jobTitle": {
+                      "type": "string"
+                    },
+                    "department": {
+                      "type": "string"
+                    },
+                    "officeLocation": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "type"
+                  ],
+                  "additionalProperties": {}
+                }
+              },
+              "inheritEntitlements": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "owners": {
+                        "type": "boolean"
+                      },
+                      "contributors": {
+                        "type": "boolean"
+                      },
+                      "users": {
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "hideFromCatalog": {
+                "description": "Hide entity from user-facing recommendations and catalog/search surfaces (still accessible to owners/contributors/admins)",
+                "type": "boolean"
+              },
+              "createdAt": {
+                "description": "ISO-8601 creation timestamp",
+                "type": "string"
+              },
+              "updatedBy": {
+                "type": "string"
+              },
+              "updatedAt": {
+                "description": "ISO-8601 update timestamp",
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "providerId": {
+                "type": "string",
+                "description": "Provider identifier (e.g. 'tavily', 'serp', 'sql')"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "isEnabled": {
+                "type": "boolean"
+              },
+              "authType": {
+                "type": "string",
+                "enum": [
+                  "managedSystemIdentity",
+                  "apiKey",
+                  "connectionString"
+                ]
+              },
+              "apiKey": {
+                "description": "Redacted in responses",
+                "type": "string"
+              },
+              "category": {
+                "description": "e.g. 'search', 'database', 'api'",
+                "type": "string"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "version": {
+                "type": "string"
+              },
+              "toolName": {
+                "type": "string"
+              },
+              "parameters": {
+                "type": "object",
+                "additionalProperties": {}
+              },
+              "integrationType": {
+                "type": "string",
+                "enum": [
+                  "registry",
+                  "rest_api",
+                  "graphql",
+                  "function"
+                ]
+              },
+              "endpoint": {
+                "description": "REST API endpoint for rest_api type",
+                "type": "string"
+              },
+              "method": {
+                "type": "string",
+                "enum": [
+                  "GET",
+                  "POST",
+                  "PUT",
+                  "PATCH",
+                  "DELETE"
+                ]
+              },
+              "functionCode": {
+                "description": "JS code for function type",
+                "type": "string"
+              },
+              "graphqlEndpoint": {
+                "type": "string"
+              },
+              "graphqlQuery": {
+                "type": "string"
+              },
+              "requiredDelegatedScope": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "providerId"
+            ],
+            "additionalProperties": false,
+            "title": "ToolProviderConfig"
+          }
+        },
+        "required": [
+          "success",
+          "message"
+        ],
+        "additionalProperties": false,
+        "title": "ToolConfigUpdateResult",
+        "description": "Result of a tool provider configuration update"
+      },
+      "Flow": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "description": "Access control model",
+            "type": "string",
+            "enum": [
+              "personal",
+              "shared"
+            ]
+          },
+          "createdBy": {
+            "description": "UPN of the creator",
+            "type": "string"
+          },
+          "isPublic": {
+            "description": "Allow public read access",
+            "type": "boolean"
+          },
+          "owners": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "group",
+                    "user"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "mail": {
+                  "type": "string"
+                },
+                "securityEnabled": {
+                  "type": "boolean"
+                },
+                "mailEnabled": {
+                  "type": "boolean"
+                },
+                "groupTypes": {
+                  "nullable": true,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "groupType": {
+                  "type": "string"
+                },
+                "userPrincipalName": {
+                  "type": "string"
+                },
+                "jobTitle": {
+                  "type": "string"
+                },
+                "department": {
+                  "type": "string"
+                },
+                "officeLocation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "type"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "contributors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "group",
+                    "user"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "mail": {
+                  "type": "string"
+                },
+                "securityEnabled": {
+                  "type": "boolean"
+                },
+                "mailEnabled": {
+                  "type": "boolean"
+                },
+                "groupTypes": {
+                  "nullable": true,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "groupType": {
+                  "type": "string"
+                },
+                "userPrincipalName": {
+                  "type": "string"
+                },
+                "jobTitle": {
+                  "type": "string"
+                },
+                "department": {
+                  "type": "string"
+                },
+                "officeLocation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "type"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "group",
+                    "user"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "mail": {
+                  "type": "string"
+                },
+                "securityEnabled": {
+                  "type": "boolean"
+                },
+                "mailEnabled": {
+                  "type": "boolean"
+                },
+                "groupTypes": {
+                  "nullable": true,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "groupType": {
+                  "type": "string"
+                },
+                "userPrincipalName": {
+                  "type": "string"
+                },
+                "jobTitle": {
+                  "type": "string"
+                },
+                "department": {
+                  "type": "string"
+                },
+                "officeLocation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "type"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "inheritEntitlements": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "owners": {
+                    "type": "boolean"
+                  },
+                  "contributors": {
+                    "type": "boolean"
+                  },
+                  "users": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "hideFromCatalog": {
+            "description": "Hide entity from user-facing recommendations and catalog/search surfaces (still accessible to owners/contributors/admins)",
+            "type": "boolean"
+          },
+          "createdAt": {
+            "description": "ISO-8601 creation timestamp",
+            "type": "string"
+          },
+          "updatedBy": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "description": "ISO-8601 update timestamp",
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "description": "Flow ID (UUID)"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "parentId": {
+            "description": "FK to parent flow group (undefined = root)",
+            "type": "string"
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "agent",
+                    "llm",
+                    "tool",
+                    "mcpServer",
+                    "conditional",
+                    "start",
+                    "end",
+                    "human",
+                    "memory",
+                    "retriever",
+                    "prompt",
+                    "formPrompt",
+                    "message",
+                    "content"
+                  ],
+                  "description": "FLOWDESIGNER_NODE_TYPE — determines which config shape data.config holds"
+                },
+                "position": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Canvas position"
+                },
+                "data": {
+                  "type": "object",
+                  "properties": {
+                    "label": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "config": {
+                      "description": "Node-type-specific configuration (ILLMConfig, IAgentConfig, IToolConfig, ... per type)",
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "isConfigured": {
+                      "type": "boolean"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "label"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "id",
+                "type",
+                "position",
+                "data"
+              ],
+              "additionalProperties": false,
+              "title": "FlowNode",
+              "description": "A single node in a Flow Designer graph (React Flow node shape)"
+            }
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string",
+                  "description": "Source node ID"
+                },
+                "target": {
+                  "type": "string",
+                  "description": "Target node ID"
+                },
+                "sourceHandle": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "targetHandle": {
+                  "nullable": true,
+                  "type": "string"
+                },
+                "data": {
+                  "type": "object",
+                  "properties": {
+                    "condition": {
+                      "description": "Branch condition (for conditional nodes)",
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "id",
+                "source",
+                "target"
+              ],
+              "additionalProperties": false,
+              "title": "FlowEdge",
+              "description": "A directed edge in a Flow Designer graph"
+            }
+          },
+          "version": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "published",
+              "archived"
+            ],
+            "description": "FLOW_STATUS"
+          },
+          "isEnabled": {
+            "description": "Whether this flow is enabled (default: true)",
+            "type": "boolean"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "isFeatured": {
+            "type": "boolean"
+          },
+          "flowType": {
+            "description": "FLOW_TYPE — 'general' (default) or 'retriever' (headless, for RAG pipeline)",
+            "type": "string",
+            "enum": [
+              "general",
+              "retriever"
+            ]
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "origin": {
+            "description": "builtIn = bootstrapped (not deletable), admin = user-created",
+            "type": "string",
+            "enum": [
+              "builtIn",
+              "admin"
+            ]
+          },
+          "executionConfig": {
+            "description": "Execution settings",
+            "type": "object",
+            "properties": {
+              "timeout": {
+                "type": "integer"
+              },
+              "retryPolicy": {
+                "type": "object",
+                "properties": {
+                  "maxRetries": {
+                    "type": "integer"
+                  },
+                  "retryDelay": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "maxRetries",
+                  "retryDelay"
+                ],
+                "additionalProperties": false
+              },
+              "errorHandling": {
+                "type": "string",
+                "enum": [
+                  "stop",
+                  "continue",
+                  "fallback"
+                ]
+              },
+              "maxParallelism": {
+                "type": "integer"
+              },
+              "maxIterations": {
+                "description": "Recursion limit for loops (default: 50)",
+                "type": "integer"
+              },
+              "enableCheckpointing": {
+                "description": "Persist execution state after each node for crash recovery",
+                "type": "boolean"
+              },
+              "checkpointTtlSeconds": {
+                "type": "integer"
+              },
+              "enableParallelFanOut": {
+                "type": "boolean"
+              },
+              "nodeTimeoutMs": {
+                "type": "integer"
+              },
+              "errorRecovery": {
+                "description": "Error-recovery buttons surfaced to the user on failure",
+                "type": "object",
+                "properties": {
+                  "allowContinue": {
+                    "type": "boolean"
+                  },
+                  "allowRestart": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "userId": {
+            "description": "Cosmos DB partition key",
+            "type": "string"
+          },
+          "_ts": {
+            "description": "Cosmos DB last-modified timestamp (epoch seconds)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "nodes",
+          "edges",
+          "version",
+          "status"
+        ],
+        "additionalProperties": false,
+        "title": "Flow",
+        "description": "Complete Flow Designer flow definition (graph + execution settings + ACL)"
+      },
+      "FlowGroup": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "parentId": {
+            "description": "FK to parent group for nesting",
+            "type": "string"
+          },
+          "icon": {
+            "description": "Material icon name",
+            "type": "string"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "builtIn",
+              "admin"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "personal",
+              "shared"
+            ]
+          },
+          "isPublic": {
+            "type": "boolean"
+          },
+          "owners": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "group",
+                    "user"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "mail": {
+                  "type": "string"
+                },
+                "securityEnabled": {
+                  "type": "boolean"
+                },
+                "mailEnabled": {
+                  "type": "boolean"
+                },
+                "groupTypes": {
+                  "nullable": true,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "groupType": {
+                  "type": "string"
+                },
+                "userPrincipalName": {
+                  "type": "string"
+                },
+                "jobTitle": {
+                  "type": "string"
+                },
+                "department": {
+                  "type": "string"
+                },
+                "officeLocation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "type"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "contributors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "group",
+                    "user"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "mail": {
+                  "type": "string"
+                },
+                "securityEnabled": {
+                  "type": "boolean"
+                },
+                "mailEnabled": {
+                  "type": "boolean"
+                },
+                "groupTypes": {
+                  "nullable": true,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "groupType": {
+                  "type": "string"
+                },
+                "userPrincipalName": {
+                  "type": "string"
+                },
+                "jobTitle": {
+                  "type": "string"
+                },
+                "department": {
+                  "type": "string"
+                },
+                "officeLocation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "type"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "group",
+                    "user"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "mail": {
+                  "type": "string"
+                },
+                "securityEnabled": {
+                  "type": "boolean"
+                },
+                "mailEnabled": {
+                  "type": "boolean"
+                },
+                "groupTypes": {
+                  "nullable": true,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "groupType": {
+                  "type": "string"
+                },
+                "userPrincipalName": {
+                  "type": "string"
+                },
+                "jobTitle": {
+                  "type": "string"
+                },
+                "department": {
+                  "type": "string"
+                },
+                "officeLocation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "type"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "inheritEntitlements": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "owners": {
+                    "type": "boolean"
+                  },
+                  "contributors": {
+                    "type": "boolean"
+                  },
+                  "users": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "sort": {
+            "type": "integer",
+            "description": "Ordering within parent"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "createdBy": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string"
+          },
+          "updatedBy": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "sort"
+        ],
+        "additionalProperties": false,
+        "title": "FlowGroup",
+        "description": "Flow group for organizing flows hierarchically (ACL cascades to children)"
+      },
+      "FlowNode": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "llm",
+              "tool",
+              "mcpServer",
+              "conditional",
+              "start",
+              "end",
+              "human",
+              "memory",
+              "retriever",
+              "prompt",
+              "formPrompt",
+              "message",
+              "content"
+            ],
+            "description": "FLOWDESIGNER_NODE_TYPE — determines which config shape data.config holds"
+          },
+          "position": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "x",
+              "y"
+            ],
+            "additionalProperties": false,
+            "description": "Canvas position"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "config": {
+                "description": "Node-type-specific configuration (ILLMConfig, IAgentConfig, IToolConfig, ... per type)",
+                "type": "object",
+                "additionalProperties": {}
+              },
+              "isConfigured": {
+                "type": "boolean"
+              },
+              "errors": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "label"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "position",
+          "data"
+        ],
+        "additionalProperties": false,
+        "title": "FlowNode",
+        "description": "A single node in a Flow Designer graph (React Flow node shape)"
+      },
+      "FlowEdge": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Source node ID"
+          },
+          "target": {
+            "type": "string",
+            "description": "Target node ID"
+          },
+          "sourceHandle": {
+            "nullable": true,
+            "type": "string"
+          },
+          "targetHandle": {
+            "nullable": true,
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "condition": {
+                "description": "Branch condition (for conditional nodes)",
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "target"
+        ],
+        "additionalProperties": false,
+        "title": "FlowEdge",
+        "description": "A directed edge in a Flow Designer graph"
+      },
+      "Page": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "description": "Access control model",
+            "type": "string",
+            "enum": [
+              "personal",
+              "shared"
+            ]
+          },
+          "createdBy": {
+            "description": "UPN of the creator",
+            "type": "string"
+          },
+          "isPublic": {
+            "description": "Allow public read access",
+            "type": "boolean"
+          },
+          "owners": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "group",
+                    "user"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "mail": {
+                  "type": "string"
+                },
+                "securityEnabled": {
+                  "type": "boolean"
+                },
+                "mailEnabled": {
+                  "type": "boolean"
+                },
+                "groupTypes": {
+                  "nullable": true,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "groupType": {
+                  "type": "string"
+                },
+                "userPrincipalName": {
+                  "type": "string"
+                },
+                "jobTitle": {
+                  "type": "string"
+                },
+                "department": {
+                  "type": "string"
+                },
+                "officeLocation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "type"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "contributors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "group",
+                    "user"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "mail": {
+                  "type": "string"
+                },
+                "securityEnabled": {
+                  "type": "boolean"
+                },
+                "mailEnabled": {
+                  "type": "boolean"
+                },
+                "groupTypes": {
+                  "nullable": true,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "groupType": {
+                  "type": "string"
+                },
+                "userPrincipalName": {
+                  "type": "string"
+                },
+                "jobTitle": {
+                  "type": "string"
+                },
+                "department": {
+                  "type": "string"
+                },
+                "officeLocation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "type"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "group",
+                    "user"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "mail": {
+                  "type": "string"
+                },
+                "securityEnabled": {
+                  "type": "boolean"
+                },
+                "mailEnabled": {
+                  "type": "boolean"
+                },
+                "groupTypes": {
+                  "nullable": true,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "groupType": {
+                  "type": "string"
+                },
+                "userPrincipalName": {
+                  "type": "string"
+                },
+                "jobTitle": {
+                  "type": "string"
+                },
+                "department": {
+                  "type": "string"
+                },
+                "officeLocation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "type"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "inheritEntitlements": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "owners": {
+                    "type": "boolean"
+                  },
+                  "contributors": {
+                    "type": "boolean"
+                  },
+                  "users": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "hideFromCatalog": {
+            "description": "Hide entity from user-facing recommendations and catalog/search surfaces (still accessible to owners/contributors/admins)",
+            "type": "boolean"
+          },
+          "createdAt": {
+            "description": "ISO-8601 creation timestamp",
+            "type": "string"
+          },
+          "updatedBy": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "description": "ISO-8601 update timestamp",
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "description": "Page ID (UUID)"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "icon": {
+            "description": "MUI icon name for the page",
+            "type": "string"
+          },
+          "parentPageId": {
+            "description": "FK to parent page for hierarchical structure",
+            "type": "string"
+          },
+          "sort": {
+            "description": "Deprecated — will be removed",
+            "type": "integer"
+          },
+          "content": {
+            "description": "Markdown body content",
+            "type": "string"
+          },
+          "contents": {
+            "description": "Content display settings for card and page views",
+            "type": "object",
+            "properties": {
+              "card": {
+                "type": "object",
+                "properties": {
+                  "showChildPages": {
+                    "type": "boolean"
+                  },
+                  "showChats": {
+                    "type": "boolean"
+                  },
+                  "showMarkdown": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "showChildPages",
+                  "showChats",
+                  "showMarkdown"
+                ],
+                "additionalProperties": false
+              },
+              "page": {
+                "type": "object",
+                "properties": {
+                  "showChildPages": {
+                    "type": "boolean"
+                  },
+                  "showChats": {
+                    "type": "boolean"
+                  },
+                  "showMarkdown": {
+                    "type": "boolean"
+                  },
+                  "showContentPage": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "showChildPages",
+                  "showChats",
+                  "showMarkdown",
+                  "showContentPage"
+                ],
+                "additionalProperties": false
+              },
+              "hidden": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "card",
+              "page",
+              "hidden"
+            ],
+            "additionalProperties": false
+          },
+          "isFeatured": {
+            "description": "Whether this page is featured in the catalog",
+            "type": "boolean"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "_ts": {
+            "description": "Cosmos DB last-modified timestamp (epoch seconds)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "additionalProperties": false,
+        "title": "Page",
+        "description": "Navigation page with markdown content, hierarchy, and ACL"
       },
       "FlowExecution": {
         "type": "object",
@@ -4982,6 +7404,254 @@
         ],
         "additionalProperties": false
       },
+      "PromptGroup": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string"
+          },
+          "scope": {
+            "default": "shared",
+            "type": "string",
+            "enum": [
+              "personal",
+              "shared"
+            ]
+          },
+          "isPublic": {
+            "default": false,
+            "type": "boolean"
+          },
+          "hideFromCatalog": {
+            "default": false,
+            "type": "boolean"
+          },
+          "owners": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "group",
+                    "user"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "mail": {
+                  "type": "string"
+                },
+                "securityEnabled": {
+                  "type": "boolean"
+                },
+                "mailEnabled": {
+                  "type": "boolean"
+                },
+                "groupTypes": {
+                  "nullable": true,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "groupType": {
+                  "type": "string"
+                },
+                "userPrincipalName": {
+                  "type": "string"
+                },
+                "jobTitle": {
+                  "type": "string"
+                },
+                "department": {
+                  "type": "string"
+                },
+                "officeLocation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "type"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "contributors": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "group",
+                    "user"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "mail": {
+                  "type": "string"
+                },
+                "securityEnabled": {
+                  "type": "boolean"
+                },
+                "mailEnabled": {
+                  "type": "boolean"
+                },
+                "groupTypes": {
+                  "nullable": true,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "groupType": {
+                  "type": "string"
+                },
+                "userPrincipalName": {
+                  "type": "string"
+                },
+                "jobTitle": {
+                  "type": "string"
+                },
+                "department": {
+                  "type": "string"
+                },
+                "officeLocation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "type"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "users": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "group",
+                    "user"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "mail": {
+                  "type": "string"
+                },
+                "securityEnabled": {
+                  "type": "boolean"
+                },
+                "mailEnabled": {
+                  "type": "boolean"
+                },
+                "groupTypes": {
+                  "nullable": true,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "groupType": {
+                  "type": "string"
+                },
+                "userPrincipalName": {
+                  "type": "string"
+                },
+                "jobTitle": {
+                  "type": "string"
+                },
+                "department": {
+                  "type": "string"
+                },
+                "officeLocation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "type"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "inheritEntitlements": {
+            "default": true,
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "owners": {
+                    "type": "boolean"
+                  },
+                  "contributors": {
+                    "type": "boolean"
+                  },
+                  "users": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "parentId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "scope",
+          "isPublic",
+          "hideFromCatalog",
+          "owners",
+          "contributors",
+          "users",
+          "inheritEntitlements"
+        ],
+        "additionalProperties": false
+      },
       "DataSourceCatalog": {
         "type": "object",
         "properties": {
@@ -6399,10 +9069,11 @@
                 ],
                 "properties": {
                   "provider": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "VECTOR_STORE_PROVIDER enum value (e.g. pinecone, weaviate, qdrant)"
                   },
                   "connection": {
-                    "type": "object"
+                    "$ref": "#/components/schemas/VectorStoreConnectionConfig"
                   }
                 }
               }
@@ -6438,22 +9109,24 @@
                 ],
                 "properties": {
                   "provider": {
-                    "type": "string"
+                    "type": "string",
+                    "description": "VECTOR_STORE_PROVIDER enum value (e.g. pinecone, weaviate, qdrant)"
                   },
                   "query": {
                     "type": "string"
                   },
                   "connection": {
-                    "type": "object"
+                    "$ref": "#/components/schemas/VectorStoreConnectionConfig"
                   },
                   "search": {
-                    "type": "object"
+                    "$ref": "#/components/schemas/VectorStoreSearchConfig"
                   },
                   "embeddingVector": {
                     "type": "array",
                     "items": {
                       "type": "number"
-                    }
+                    },
+                    "description": "Pre-computed query embedding (skips server-side embedding)"
                   }
                 }
               }
@@ -6531,7 +9204,17 @@
         "description": "Returns all chats the authenticated user is entitled to access based on ACL.",
         "responses": {
           "200": {
-            "description": "Array of entitled chat objects"
+            "description": "Array of entitled chat objects",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Chat"
+                  }
+                }
+              }
+            }
           },
           "401": {
             "description": "Not authenticated"
@@ -6548,7 +9231,17 @@
         "description": "Returns navigation pages the user is entitled to access. Cached for 5 minutes.",
         "responses": {
           "200": {
-            "description": "Array of page objects"
+            "description": "Array of page objects",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Page"
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -6630,7 +9323,14 @@
         ],
         "responses": {
           "200": {
-            "description": "Array of chat log entries (full documents in `data` plus `summaries`; `data` is empty when summariesOnly=true)"
+            "description": "Paginated chat logs (full documents in `data` plus `summaries`; `data` is empty when summariesOnly=true)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatLogsResponse"
+                }
+              }
+            }
           }
         }
       },
@@ -6639,19 +9339,27 @@
           "User"
         ],
         "summary": "Create a chat log entry",
+        "description": "Creates a chat log owned by the authenticated user. `email`, `id`, `createdAt`, and `updatedAt` are set server-side; a title is generated asynchronously from the chat history when none is provided.\n",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/ChatLog"
               }
             }
           }
         },
         "responses": {
           "201": {
-            "description": "Chat log created"
+            "description": "Chat log created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatLog"
+                }
+              }
+            }
           }
         }
       }
@@ -6674,7 +9382,14 @@
         ],
         "responses": {
           "200": {
-            "description": "Chat log found"
+            "description": "Chat log found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatLog"
+                }
+              }
+            }
           },
           "404": {
             "description": "Chat log not found or access denied"
@@ -6686,6 +9401,7 @@
           "User"
         ],
         "summary": "Update a chat log entry",
+        "description": "Partial update — supplied fields are merged into the existing log. `email` and `updatedAt` are always overwritten server-side.\n",
         "parameters": [
           {
             "in": "path",
@@ -6696,9 +9412,26 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatLog"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
-            "description": "Chat log updated"
+            "description": "Chat log updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatLog"
+                }
+              }
+            }
           }
         }
       },
@@ -7687,7 +10420,14 @@
         },
         "responses": {
           "200": {
-            "description": "Configuration updated"
+            "description": "Configuration updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolConfigUpdateResult"
+                }
+              }
+            }
           },
           "400": {
             "description": "Update failed"
@@ -7720,7 +10460,14 @@
         },
         "responses": {
           "200": {
-            "description": "Configuration updated"
+            "description": "Configuration updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolConfigUpdateResult"
+                }
+              }
+            }
           },
           "400": {
             "description": "Update failed"
@@ -7786,7 +10533,14 @@
         },
         "responses": {
           "200": {
-            "description": "Configuration updated"
+            "description": "Configuration updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolConfigUpdateResult"
+                }
+              }
+            }
           },
           "400": {
             "description": "Update failed"
@@ -7819,7 +10573,14 @@
         },
         "responses": {
           "200": {
-            "description": "Configuration updated"
+            "description": "Configuration updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolConfigUpdateResult"
+                }
+              }
+            }
           },
           "400": {
             "description": "Update failed"
@@ -7852,7 +10613,14 @@
         },
         "responses": {
           "200": {
-            "description": "Configuration updated"
+            "description": "Configuration updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolConfigUpdateResult"
+                }
+              }
+            }
           },
           "400": {
             "description": "Update failed"
@@ -7885,7 +10653,14 @@
         },
         "responses": {
           "200": {
-            "description": "Configuration updated"
+            "description": "Configuration updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolConfigUpdateResult"
+                }
+              }
+            }
           },
           "400": {
             "description": "Update failed"
@@ -7915,7 +10690,14 @@
         },
         "responses": {
           "200": {
-            "description": "Configuration updated"
+            "description": "Configuration updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolConfigUpdateResult"
+                }
+              }
+            }
           },
           "400": {
             "description": "Update failed"
@@ -7962,7 +10744,14 @@
         },
         "responses": {
           "200": {
-            "description": "Configuration updated"
+            "description": "Configuration updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolConfigUpdateResult"
+                }
+              }
+            }
           },
           "400": {
             "description": "Missing configId or update failed"
@@ -7979,7 +10768,17 @@
         "description": "Returns all data platform connections the user is entitled to (with credentials redacted).",
         "responses": {
           "200": {
-            "description": "Array of sanitized connections"
+            "description": "Array of sanitized connections",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DataConnection"
+                  }
+                }
+              }
+            }
           },
           "401": {
             "description": "User not authenticated"
@@ -8000,36 +10799,21 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "required": [
-                  "name",
-                  "type"
-                ],
-                "properties": {
-                  "name": {
-                    "type": "string"
-                  },
-                  "type": {
-                    "type": "string"
-                  },
-                  "scope": {
-                    "type": "string",
-                    "enum": [
-                      "personal",
-                      "shared"
-                    ]
-                  },
-                  "authentication": {
-                    "type": "object"
-                  }
-                }
+                "$ref": "#/components/schemas/DataConnection"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Saved connection (sanitized)"
+            "description": "Saved connection (sanitized)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataConnection"
+                }
+              }
+            }
           },
           "400": {
             "description": "Name and type are required"
@@ -8055,7 +10839,14 @@
         ],
         "responses": {
           "200": {
-            "description": "Connection details (sanitized)"
+            "description": "Connection details (sanitized)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataConnection"
+                }
+              }
+            }
           },
           "404": {
             "description": "Connection not found"
@@ -8106,7 +10897,14 @@
         ],
         "responses": {
           "201": {
-            "description": "Connection copied"
+            "description": "Connection copied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataConnection"
+                }
+              }
+            }
           },
           "404": {
             "description": "Connection not found"
@@ -8159,7 +10957,17 @@
         ],
         "responses": {
           "200": {
-            "description": "Array of connections of the specified type"
+            "description": "Array of connections of the specified type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DataConnection"
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -8295,6 +11103,20 @@
         ],
         "summary": "Document Intelligence connectivity probe",
         "description": "Verifies the default search endpoint has a documentIntelligenceEndpoint\nconfigured and that the configured credentials can reach the service.\nRequired for OneDrive workspace indexing of non-plaintext files (PDF,\nWord, Excel, PowerPoint, images) — without it the indexer silently\nskips content extraction.\n",
+        "responses": {
+          "200": {
+            "description": "Probe result"
+          }
+        }
+      }
+    },
+    "/telemetry/checkazuremonitor": {
+      "get": {
+        "tags": [
+          "Telemetry"
+        ],
+        "summary": "Azure Monitor logging connectivity probe",
+        "description": "Token-only health check for the Azure Monitor (Log Analytics) log-shipping\nintegration. Verifies the config fields are set and that managed identity\ncan acquire a token for https://monitor.azure.com/.default. Does NOT perform\na live upload, so no test rows are written. A green result does not guarantee\ningestion — the Monitoring Metrics Publisher role and DCR/stream validity are\nonly enforced at real ingestion time.\n",
         "responses": {
           "200": {
             "description": "Probe result"
@@ -10110,7 +12932,24 @@
         "description": "Returns all prompt templates and groups the user is entitled to see. Excludes ephemeral prompts.",
         "responses": {
           "200": {
-            "description": "Array of prompt and group objects"
+            "description": "Array of prompt and group objects",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/PromptTemplate"
+                      },
+                      {
+                        "$ref": "#/components/schemas/PromptGroup"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
           },
           "401": {
             "description": "Not authenticated"
@@ -10128,40 +12967,35 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "properties": {
-                  "type": {
-                    "type": "string",
-                    "enum": [
-                      "template",
-                      "group"
-                    ]
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/PromptTemplate"
                   },
-                  "title": {
-                    "type": "string"
-                  },
-                  "content": {
-                    "type": "string",
-                    "description": "Prompt content with {{variable}} placeholders"
-                  },
-                  "scope": {
-                    "type": "string",
-                    "enum": [
-                      "personal",
-                      "shared"
-                    ]
-                  },
-                  "parentId": {
-                    "type": "string"
+                  {
+                    "$ref": "#/components/schemas/PromptGroup"
                   }
-                }
+                ]
               }
             }
           }
         },
         "responses": {
           "201": {
-            "description": "Prompt created"
+            "description": "Prompt created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/PromptTemplate"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PromptGroup"
+                    }
+                  ]
+                }
+              }
+            }
           },
           "403": {
             "description": "Insufficient permissions"
@@ -10187,7 +13021,21 @@
         ],
         "responses": {
           "200": {
-            "description": "Prompt or group object"
+            "description": "Prompt or group object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/PromptTemplate"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PromptGroup"
+                    }
+                  ]
+                }
+              }
+            }
           },
           "403": {
             "description": "Access denied"
@@ -10218,14 +13066,35 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/PromptTemplate"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PromptGroup"
+                  }
+                ]
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Prompt updated"
+            "description": "Prompt updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/PromptTemplate"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PromptGroup"
+                    }
+                  ]
+                }
+              }
+            }
           },
           "403": {
             "description": "Access denied"
@@ -10430,7 +13299,10 @@
                     "type": "string"
                   },
                   "variableSpecs": {
-                    "type": "array"
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/PromptVariable"
+                    }
                   },
                   "executionId": {
                     "type": "string"
@@ -10451,7 +13323,14 @@
         },
         "responses": {
           "201": {
-            "description": "Ephemeral prompt created"
+            "description": "Ephemeral prompt created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromptTemplate"
+                }
+              }
+            }
           }
         }
       }
@@ -10599,7 +13478,17 @@
         "description": "Returns all navigation pages the user is entitled to see, filtered by ACL and scope.",
         "responses": {
           "200": {
-            "description": "Array of page objects"
+            "description": "Array of page objects",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Page"
+                  }
+                }
+              }
+            }
           },
           "401": {
             "description": "Not authenticated"
@@ -10617,35 +13506,21 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "required": [
-                  "id"
-                ],
-                "properties": {
-                  "id": {
-                    "type": "string"
-                  },
-                  "title": {
-                    "type": "string"
-                  },
-                  "scope": {
-                    "type": "string",
-                    "enum": [
-                      "personal",
-                      "shared"
-                    ]
-                  },
-                  "parentPageId": {
-                    "type": "string"
-                  }
-                }
+                "$ref": "#/components/schemas/Page"
               }
             }
           }
         },
         "responses": {
           "201": {
-            "description": "Page created"
+            "description": "Page created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page"
+                }
+              }
+            }
           },
           "403": {
             "description": "Insufficient permissions"
@@ -10671,7 +13546,14 @@
         ],
         "responses": {
           "200": {
-            "description": "Page object"
+            "description": "Page object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page"
+                }
+              }
+            }
           },
           "403": {
             "description": "Access denied"
@@ -10702,14 +13584,21 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/Page"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Page updated"
+            "description": "Page updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page"
+                }
+              }
+            }
           },
           "403": {
             "description": "Access denied"
@@ -10737,14 +13626,21 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/Page"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Page patched"
+            "description": "Page patched",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page"
+                }
+              }
+            }
           },
           "400": {
             "description": "Invalid scope change"
@@ -11396,7 +14292,28 @@
         "description": "Returns all MCP server registrations from Cosmos DB (deduplicated, sanitized).",
         "responses": {
           "200": {
-            "description": "List of MCP servers"
+            "description": "List of MCP servers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "servers": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/MCPServerRegistryEntry"
+                      }
+                    },
+                    "totalServers": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
           },
           "500": {
             "description": "Failed to list servers"
@@ -11422,7 +14339,22 @@
         ],
         "responses": {
           "200": {
-            "description": "Server details (sanitized)"
+            "description": "Server details (sanitized)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "server": {
+                      "$ref": "#/components/schemas/MCPServerRegistryEntry"
+                    }
+                  }
+                }
+              }
+            }
           },
           "404": {
             "description": "Server not found"
@@ -12019,7 +14951,24 @@
         "description": "Returns all flows and flow groups the user is entitled to see, filtered by ACL and scope.",
         "responses": {
           "200": {
-            "description": "Array of flow and flow group objects"
+            "description": "Array of flow and flow group objects",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/components/schemas/Flow"
+                      },
+                      {
+                        "$ref": "#/components/schemas/FlowGroup"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
           },
           "401": {
             "description": "Not authenticated"
@@ -12073,7 +15022,21 @@
         },
         "responses": {
           "201": {
-            "description": "Flow or flow group created"
+            "description": "Flow or flow group created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Flow"
+                    },
+                    {
+                      "$ref": "#/components/schemas/FlowGroup"
+                    }
+                  ]
+                }
+              }
+            }
           },
           "400": {
             "description": "Missing required fields"
@@ -12131,7 +15094,25 @@
         },
         "responses": {
           "200": {
-            "description": "Generated flow response"
+            "description": "Generated flow response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "flow": {
+                      "$ref": "#/components/schemas/Flow"
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
           },
           "400": {
             "description": "Missing description"
@@ -12161,7 +15142,21 @@
         ],
         "responses": {
           "200": {
-            "description": "Flow or flow group object"
+            "description": "Flow or flow group object",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Flow"
+                    },
+                    {
+                      "$ref": "#/components/schemas/FlowGroup"
+                    }
+                  ]
+                }
+              }
+            }
           },
           "403": {
             "description": "Access denied"
@@ -12193,14 +15188,21 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/Flow"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Flow updated"
+            "description": "Flow updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Flow"
+                }
+              }
+            }
           },
           "403": {
             "description": "Access denied"
@@ -12229,14 +15231,21 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object"
+                "$ref": "#/components/schemas/Flow"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Flow patched"
+            "description": "Flow patched",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Flow"
+                }
+              }
+            }
           },
           "400": {
             "description": "Invalid scope change"
@@ -14467,6 +17476,38 @@
         }
       }
     },
+    "/azure/search/indexers/{indexer}/resync-permissions": {
+      "post": {
+        "tags": [
+          "Search"
+        ],
+        "summary": "Resync indexer permissions (ACLs)",
+        "description": "Refreshes document-level permissions (ACLs) across the indexer's full data source, then triggers an indexer run to apply the resync. Required after permission changes on a SharePoint parent scope (site, library, list, or folder), or to backfill ACLs for content indexed before incremental ACL sync. Requires API version 2026-05-01-preview or later.\n",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "indexer",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "searchEndpointId",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Override AI Search endpoint (default system default)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Permission resync initiated"
+          }
+        }
+      }
+    },
     "/azure/search/indexer/{indexer}/events": {
       "get": {
         "tags": [
@@ -16188,7 +19229,14 @@
         ],
         "responses": {
           "200": {
-            "description": "Array of chat log entries"
+            "description": "Paginated chat logs across all users (full documents in `data` plus `summaries`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatLogsResponse"
+                }
+              }
+            }
           },
           "403": {
             "description": "Admin privileges required"

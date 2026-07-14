@@ -12,7 +12,9 @@ Both approaches share the same `IDataConnection` registry for managing credentia
 
 ### Supported Providers
 
-**Tier 1 — High Priority (`DataPlatformType` values in `IDataConnection`):**
+All vector stores are first-class `DataPlatformType` values in `IDataConnection` (see `VECTOR_STORE_TYPES` in `dataConnectionTypes.ts`).
+
+**Tier 1 — Core:**
 
 | Provider | Platform Type | Description |
 |----------|--------------|-------------|
@@ -25,13 +27,23 @@ Both approaches share the same `IDataConnection` registry for managing credentia
 | [OpenSearch](https://opensearch.org/) | `opensearch` | AWS-managed search and analytics |
 | [Redis](https://redis.io/) | `redis` | In-memory vector search |
 
-**Tier 2 — Enterprise/Cloud (`VECTOR_STORE_PROVIDER` in Flow Designer):**
+**Tier 2 — Enterprise / Cloud:**
 
-Oracle Vector, IBM watsonx, AWS Kendra, Vertex AI Search, Milvus, MongoDB Atlas
+| Provider | Platform Type | Description |
+|----------|--------------|-------------|
+| [Milvus](https://milvus.io/) | `milvus` | Open-source vector database |
+| [MongoDB Atlas](https://www.mongodb.com/products/platform/atlas-vector-search) | `mongodb_atlas` | Atlas Vector Search |
+| [Vertex AI Vector Search](https://cloud.google.com/vertex-ai/docs/vector-search/overview) | `vertex_ai_search` | Google Cloud managed vectors |
+| [Amazon Kendra](https://aws.amazon.com/kendra/) | `aws_kendra` | Managed enterprise search |
+| [Oracle Vector Search](https://www.oracle.com/database/vector-database/) | `oracle_vector` | Oracle Database 23ai vectors |
 
 **Tier 3 — Specialized:**
 
-Vespa, LanceDB, FAISS, Marqo
+| Provider | Platform Type | Description |
+|----------|--------------|-------------|
+| [Vespa](https://vespa.ai/) | `vespa` | Search + vector serving engine |
+| [LanceDB](https://lancedb.com/) | `lancedb` | Embedded vector database |
+| [Marqo](https://www.marqo.ai/) | `marqo` | End-to-end vector search |
 
 ### Data Connection Fields (Vector Stores)
 
