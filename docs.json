@@ -90,6 +90,7 @@
               "operations/ci-cd",
               "operations/capacity-limits",
               "operations/notifications",
+              "operations/azure-monitor-logging",
               "operations/troubleshooting"
             ]
           },

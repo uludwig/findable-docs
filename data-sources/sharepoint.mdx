@@ -12,6 +12,13 @@ Findable can index and search SharePoint Online document libraries, making corpo
 3. **Browse and select libraries** — The admin UI lets you browse SharePoint sites, select document libraries, and create data sources
 4. **Indexing pipeline** — For each selected library, Findable automatically creates an Azure AI Search data source, index, skillset, and indexer
 
+### API Version
+
+SharePoint search resources always use the **`2026-05-01-preview`** Azure AI Search API version, enforced by the `SharePointSearchAdapter` regardless of the endpoint's configured version. This version is required for:
+
+- **Document-level ACL ingestion** (`indexerPermissionOptions`, introduced for SharePoint in `2026-02-01-preview`)
+- **Incremental ACL sync** (`2026-05-01-preview`) — permission changes on items with *unique permissions* are detected on each indexer run. Parent-scope permission changes (site, library, list, or folder level) still require an indexer `/resync` with `options: ["permissions"]`.
+
 ### Data Source Naming
 
 SharePoint data source names are derived from the library URL with sanitization:

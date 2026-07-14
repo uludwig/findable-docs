@@ -1,0 +1,53 @@
+---
+title: "Azure Monitor Logging"
+description: "Ship Findable application logs to an Azure Log Analytics workspace via the Azure Monitor Logs Ingestion API."
+---
+
+Findable can ship its application logs to an **Azure Log Analytics workspace** via the **Azure Monitor Logs Ingestion API**, in addition to the standard console and rotating file transports (Winston).
+
+Configured in **Admin → Azure Monitor Logging** (`#/admin/logging`). Off by default.
+
+### Settings
+
+| Setting | Env Var | Description |
+|---------|---------|-------------|
+| `azureMonitorLoggingEnabled` | `AZURE_MONITOR_LOGGING_ENABLED` | Master toggle. When on, logs are also shipped to Log Analytics at the current `LOG_LEVEL`. |
+| `azureMonitorDceEndpoint` | `AZURE_MONITOR_DCE_ENDPOINT` | Data Collection Endpoint logs-ingestion URI, e.g. `https://<name>.<region>.ingest.monitor.azure.com` |
+| `azureMonitorDcrRuleId` | `AZURE_MONITOR_DCR_RULE_ID` | Data Collection Rule immutable ID, e.g. `dcr-xxxxxxxxxxxxxxxx` |
+| `azureMonitorStreamName` | `AZURE_MONITOR_STREAM_NAME` | Custom stream declared on the DCR, e.g. `Custom-FindableLogs_CL` |
+
+Settings changes are picked up automatically on the settings auto-refresh cycle — no restart required.
+
+### Authentication
+
+**Managed identity only** (`DefaultAzureCredential`, scope `https://monitor.azure.com/.default`). The app's identity must have the **Monitoring Metrics Publisher** role on the Data Collection Rule / Data Collection Endpoint. API keys are not supported.
+
+### Custom Table Schema
+
+Each log record is shipped as a row with these columns (declare a matching custom table + stream on the DCR):
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `TimeGenerated` | datetime | Ingestion timestamp |
+| `Level` | string | Log level (`error`, `warn`, `info`, `debug`, …) |
+| `Message` | string | Log message |
+| `Source` | string | Logger source/module |
+| `Service` | string | `findable-service` |
+| `Instance` | string | `WEBSITE_INSTANCE_ID` (or `local`) |
+| `Properties` | string | JSON of any additional metadata |
+
+### Reliability Guarantees
+
+Log shipping is **best-effort and never blocks or breaks the app**:
+
+- **Non-blocking** — records are buffered in memory; uploads happen out-of-band (batch of 500 rows or every 5 seconds, whichever comes first)
+- **Bounded memory** — buffer capped at 10,000 rows; oldest rows are dropped if ingestion lags
+- **Failure isolation** — upload failures are logged to console and the batch is dropped; a bad workspace, role, or config can never wedge the app
+- **Graceful shutdown** — a final flush is attempted on `SIGTERM`/`SIGINT`/`beforeExit`
+- **No level elevation** — the transport inherits the base logger's `LOG_LEVEL`
+
+### Health Probe
+
+The **System Health** connectivity check includes an Azure Monitor probe that verifies the feature is enabled, the three config fields are set, and the managed identity can acquire a token for `monitor.azure.com`. The admin page also has a **Test now** button.
+
+> A green probe does **not** guarantee ingestion — the Monitoring Metrics Publisher role and the DCR rule ID / stream name are only validated at real ingestion time (a misconfiguration surfaces as a 403 there, not in the probe).

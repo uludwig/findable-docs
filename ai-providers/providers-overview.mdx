@@ -1,30 +1,29 @@
 ---
 title: "AI Providers & Models"
-description: "All AI communication is orchestrated through LangChain — 16 supported providers with a unified interface."
+description: "All AI communication is orchestrated through LangChain — 15 supported providers with a unified interface."
 ---
 
-Findable orchestrates **all AI communication through LangChain**, supporting 16 providers with a unified interface. Each provider has one or more API versions that control the endpoint format used.
+Findable orchestrates **all AI communication through LangChain**, supporting 15 providers with a unified interface. Each provider has one or more API versions that control the endpoint format used.
 
 ### Supported Providers
 
 | Provider | LangChain Class | Default Model | API Versions | Auth |
 |----------|----------------|---------------|-------------|------|
-| **[Azure AI](https://ai.azure.com/)** | `ChatOpenAI` (v1 format) | `gpt-5.4` | `v1` (stable), `preview` | API Key or Managed Identity |
-| **[OpenAI](https://platform.openai.com/api-keys)** | `ChatOpenAI` | `gpt-5.4` | `v1` | API Key |
-| **[Anthropic](https://console.anthropic.com/settings/keys)** | `ChatAnthropic` | `claude-sonnet-4-20250514` | `2023-06-01` | API Key |
-| **[Google Gemini](https://aistudio.google.com/apikey)** | `ChatGoogleGenerativeAI` | `gemini-2.5-flash` | `v1`, `v1beta`, `v1alpha` | API Key |
-| **[xAI (Grok)](https://console.x.ai/)** | `ChatXAI` | `grok-4` | `v1` | API Key |
+| **[Azure AI](https://ai.azure.com/)** | `ChatOpenAI` (v1 format) | `gpt-5.6` | `v1` (stable), `preview` | API Key or Managed Identity |
+| **[OpenAI](https://platform.openai.com/api-keys)** | `ChatOpenAI` | `gpt-5.6` | `v1` | API Key |
+| **[Anthropic](https://console.anthropic.com/settings/keys)** | `ChatAnthropic` | `claude-sonnet-5` | `2023-06-01` | API Key |
+| **[Google Gemini](https://aistudio.google.com/apikey)** | `ChatGoogleGenerativeAI` | `gemini-3.5-flash` | `v1`, `v1beta`, `v1alpha` | API Key |
+| **[xAI (Grok)](https://console.x.ai/)** | `ChatXAI` | `grok-4.5` | `v1` | API Key |
 | **[DeepSeek](https://platform.deepseek.com/api_keys)** | `ChatOpenAI` (compatible) | `deepseek-chat` | `v1` | API Key |
 | **[Perplexity](https://www.perplexity.ai/settings/api)** | `ChatOpenAI` (compatible) | `sonar-pro` | `v1` | API Key |
 | **[Mistral](https://console.mistral.ai/api-keys)** | `ChatMistralAI` | `mistral-large-latest` | `v1` | API Key |
-| **[Cohere](https://dashboard.cohere.com/api-keys)** | `ChatCohere` | `command-r-plus` | `v1`, `v2` | API Key |
+| **[Cohere](https://dashboard.cohere.com/api-keys)** | `ChatCohere` | `command-a-03-2025` | `v1`, `v2` | API Key |
 | **[Groq](https://console.groq.com/keys)** | `ChatGroq` | `llama-3.3-70b-versatile` | `v1` | API Key |
-| **[AWS Bedrock](https://console.aws.amazon.com/bedrock/)** | `ChatBedrockConverse` | `anthropic.claude-4-sonnet-20250514-v1:0` | `v1` | AWS Credentials |
+| **[AWS Bedrock](https://console.aws.amazon.com/bedrock/)** | `ChatBedrockConverse` | `anthropic.claude-sonnet-5` | `v1` | AWS Credentials |
 | **[Ollama](https://ollama.com/)** | `ChatOllama` | `llama3.2` | `v1` | None (local) |
-| **[Fireworks AI](https://fireworks.ai/)** | `ChatFireworks` | `llama-v3p1-405b-instruct` | `v1` | API Key |
-| **[Together AI](https://www.together.ai/)** | `ChatTogetherAI` | `Llama-3.3-70B-Instruct-Turbo` | `v1` | API Key |
-| **[DeepInfra](https://deepinfra.com/)** | `ChatDeepInfra` | `Llama-3.3-70B-Instruct` | `v1` | API Key |
-| **[Prem AI](https://premai.io/)** | `ChatPrem` | `gpt-4o` | `v1` | API Key |
+| **[Fireworks AI](https://fireworks.ai/)** | `ChatFireworks` | `deepseek-v3` | `v1` | API Key |
+| **[Together AI](https://www.together.ai/)** | `ChatTogetherAI` | `DeepSeek-V3` | `v1` | API Key |
+| **[DeepInfra](https://deepinfra.com/)** | `ChatDeepInfra` | `DeepSeek-R1` | `v1` | API Key |
 
 ### Orchestrators
 
@@ -32,10 +31,10 @@ All orchestrators use LangChain for LLM calls:
 
 | Orchestrator | Supported Providers | Description |
 |-------------|-------------------|-------------|
-| **LangChain** | All 16 providers | Standard chat with RAG, streaming, and citations |
-| **Flow Designer** | All 16 providers | Visual workflow execution |
+| **LangChain** | All 15 providers | Standard chat with RAG, streaming, and citations |
+| **Flow Designer** | All 15 providers | Visual workflow execution |
 | **MCP** | OpenAI, Azure AI | Model Context Protocol tool orchestration |
-| **AI Utility** | All 16 providers | Background tasks (title generation, query refinement) |
+| **AI Utility** | All 15 providers | Background tasks (title generation, query refinement) |
 
 ### LangChain Packages
 
