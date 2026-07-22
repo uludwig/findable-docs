@@ -1,0 +1,50 @@
+---
+title: "AI File & Image Generation"
+description: "Agents produce real, downloadable artifacts — text files, Office documents, and raster images — persisted to the user's personal storage and surfaced as file chips."
+---
+
+Agents can produce real, downloadable artifacts — text files, Office documents, and raster images — persisted to the user's personal storage and surfaced as file chips in the chat. Everything converges on a single persistence pipeline (`persistGeneratedFile()` in `src/azure/files/generatedfilesservice.ts`).
+
+### Capabilities & Routing
+
+Detectors only *admit* capabilities into a turn; the model decides between overlapping capabilities by the **shape of the content**, never by the noun the user used ("image", "picture", "diagram", and "chart" are interchangeable in user speech):
+
+| User intent | Producer | Result |
+|---|---|---|
+| Diagram / flowchart | Chat LLM → ```` ```mermaid ```` fence | Inline render with SVG/PNG export |
+| Chart / graph | Chat LLM → ```` ```chart ```` JSON fence | Inline Recharts render with SVG/PNG export |
+| Text files (CSV, JSON, MD, HTML, XML) | `save_generated_file` tool | File chip |
+| Standalone SVG asset (logo, icon) | `save_generated_file` (sanitized at write) | File chip + inline preview |
+| Raster image ("a pill bottle") | `generate_image` tool → image model endpoint | File chip + inline preview |
+| Word / Excel documents | `create_word_document` / `create_excel_workbook` | File chip |
+| Bespoke formats (STL, PDF, …) | Any MCP tool returning an embedded blob | File chip (generic blob adapter) |
+
+When the request is genuinely ambiguous (structured diagram vs. generated raster image) and a wrong guess would be costly, the model calls the `ask_user` tool to present a one-line clarifying question with 2–4 tappable answer options.
+
+### Tools
+
+- **`save_generated_file`** — persists model-authored text content (CSV, JSON, Markdown, HTML, XML, SVG). SVG payloads are sanitized at write regardless of source.
+- **`create_word_document`** — two modes: (1) fill a chat-attached or Workspace `.docx` template with `{tag}` substitution (errors list the available tags when data is incomplete), or (2) render freeform markdown to a Word document.
+- **`create_excel_workbook`** — generates `.xlsx` workbooks from structured data.
+- **`generate_image`** — bound only when the tenant has an enabled **Image Generation** model endpoint. Bytes come from the image API server-side; the chat model never handles base64. Without an image endpoint the AI says so and offers the closest inline alternative (SVG, Mermaid, chart).
+- **MCP blob adapter** — MCP tool results carrying embedded resource blobs or image blocks are persisted as generated files automatically, so any admin-entitled MCP server that returns a blob becomes a file generator with zero custom code.
+
+### Storage & Lifecycle
+
+- Files land in `GeneratedFiles/{chatId}` in the user's personal storage — OneDrive when `workspaceFileLocation` is OneDrive (delegated OBO Graph write), Azure Blob otherwise. The folder is a deliberate sibling of `AttachedFiles/{chatId}` and is **never RAG-indexed**.
+- Flow runs without chat context (designer test runs) use a flow-scoped `flow-{flowId}` folder.
+- **`generatedFilesMaxSizeKB`** caps individual file size (0 = unlimited).
+- **`generatedFilesRetentionInHours`** ages out generated files on the **blob backend only** (0 disables the sweep); on OneDrive, generated files follow the user's app-folder lifecycle under M365 governance. Both settings live on **Admin → Personal Workspace**.
+- File chips are rendered in the chat via a `generated_files` SSE frame and persist in chat history.
+
+### Admin Setup — Image Generation
+
+1. Run bootstrap (or add manually) to seed the **Image Generation** model endpoint catalog entries: `gpt-image-1` (Azure AI and OpenAI), `grok-2-image` (xAI), and `gemini-3.1-flash-image` (Google).
+2. Enable/configure the endpoint you want on the **Models** admin page (endpoint type must be **Image Generation**).
+3. On **Admin → AI Settings**, select the **Image Generation Model**. Unset falls back to the first enabled image endpoint; with no image endpoint at all the `generate_image` tool is not bound.
+
+Provider notes: DALL·E 3 was retired in March 2026 and is not supported on Azure/OpenAI (use `gpt-image-1`); Google's Imagen predict API is deprecated — Gemini-native image models are used instead.
+
+### Admin Setup — Default Chat Model
+
+On **Admin → AI Settings**, select the **Default Chat Model** (`defaultChatModelEndpointId`). It is used when a chat has no model configured and is the final fallback for the utility and workspace models. This pointer replaces the legacy default flag on the model endpoint document — resolution order is: pointer → legacy `isDefault` flag → first enabled chat model.

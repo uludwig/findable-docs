@@ -7,6 +7,48 @@ Findable can ship its application logs to an **Azure Log Analytics workspace** v
 
 Configured in **Admin → Azure Monitor Logging** (`#/admin/logging`). Off by default.
 
+### Azure Setup
+
+Follow these steps in the [Azure portal](https://portal.azure.com/) to stand up the ingestion pipeline, then fill in the fields on the admin page. The portal's **DCR-based custom table** wizard creates the table, Data Collection Rule (DCR), and (a required) Data Collection Endpoint (DCE) together, and infers the columns from a **sample JSON file** you upload — you don't type column names by hand.
+
+1. **Create a Log Analytics workspace** — In the Azure portal, go to **Azure Monitor → Log Analytics workspaces** and create (or choose) a workspace.
+2. **Create a Data Collection Endpoint (DCE)** — Create a DCE in the same region as the workspace. A DCR-based custom table **requires** a DCE, so create this first. Copy its **Logs Ingestion URI** into the **Data Collection Endpoint (DCE)** field on the admin page.
+3. **Start the custom table wizard** — In the workspace, open **Tables → Create → New custom log (DCR-based)**. On the **Basics** step, name the table (e.g. `FindableLogs_CL`), then **create a new Data Collection Rule** and select the **DCE from step 2** (the DCR must target a DCE — this is where the requirement is enforced).
+
+   **Table plan** — the wizard asks whether the table is **Analytics**, **Basic**, or **Auxiliary** (Data Lake). Pick the plan based on how you'll use the logs:
+
+   | Plan | Best for | Query & retention | Cost |
+   |------|----------|-------------------|------|
+   | **Analytics** *(recommended)* | Operational app logs you query, alert on, and chart | Full KQL, alerts, dashboards; interactive retention up to 2 years (archive to 12) | Highest ingestion |
+   | **Basic** | High-volume, low-value logs (e.g. verbose/debug) troubleshot occasionally | Limited KQL subset, pay-per-query, shorter interactive retention, no alerts | Lower ingestion |
+   | **Auxiliary** (Data Lake) | Verbose logs kept for compliance / long-term archive | Very limited, pay-per-scan querying | Lowest ingestion |
+
+   Choose **Analytics** unless you're deliberately shipping very high-volume debug logs purely for occasional troubleshooting — then **Basic** saves cost. Alerts and full analytics require the **Analytics** plan.
+4. **Upload a sample JSON file** — On the **Schema and transformation** step, the wizard asks you to **upload a sample JSON file** rather than specifying columns manually. Azure infers the table schema from it. Save the sample below as `findable-sample.json` and upload it:
+
+   ```json
+   [
+     {
+       "TimeGenerated": "2025-01-01T00:00:00Z",
+       "Level": "info",
+       "Message": "Sample Findable log record",
+       "Source": "logger",
+       "Service": "findable-service",
+       "Instance": "local",
+       "Properties": "{}"
+     }
+   ]
+   ```
+
+   The `TimeGenerated` field maps directly to the required timestamp column; the rest become string columns. If the wizard doesn't pick up `TimeGenerated` automatically, add a transformation such as `source | extend TimeGenerated = todatetime(TimeGenerated)`.
+5. **Copy the DCR IDs** — After the wizard finishes, open the created DCR and copy its **Immutable ID** (`dcr-…`) into **DCR Immutable Rule ID**. The portal names the stream `Custom-<TableName>` (e.g. `Custom-FindableLogs_CL`) — copy it into **Stream Name**.
+6. **Grant the managed identity access** — Assign the **Monitoring Metrics Publisher** role **scoped to the DCR**, with **this app's managed identity as the member**. The DCR is the *scope* (where the permission applies); the *member* is the identity Findable runs as (the App Service / Function App / Container App system-assigned or user-assigned identity) that sends the logs. You are **not** giving the DCR any membership.
+
+   On the **DCR** resource: **Access control (IAM) → Add → Add role assignment** → Role = **Monitoring Metrics Publisher** → **Assign access to: Managed identity** → **Select members** = your app's managed identity → Save. This is required for ingestion to succeed.
+7. **Enable and test** — Enable the toggle on the admin page, click **Save**, then **Test now**. Changes apply within ~5 minutes without a restart.
+
+> Microsoft docs: [Logs Ingestion API in Azure Monitor](https://learn.microsoft.com/azure/azure-monitor/logs/logs-ingestion-api-overview) · [Create a custom table (DCR-based)](https://learn.microsoft.com/azure/azure-monitor/logs/create-custom-table)
+
 ### Settings
 
 | Setting | Env Var | Description |
@@ -35,6 +77,35 @@ Each log record is shipped as a row with these columns (declare a matching custo
 | `Service` | string | `findable-service` |
 | `Instance` | string | `WEBSITE_INSTANCE_ID` (or `local`) |
 | `Properties` | string | JSON of any additional metadata |
+
+### Charting the Logs
+
+The portal's **New chart** button on raw query results fails with *"…missing a column of one of the following types: int, long, decimal or real"* — expected, since every column above is a string (plus the `TimeGenerated` datetime). Log rows are events; there's nothing numeric to put on a Y-axis until you aggregate. Chart with a KQL `summarize` first, which produces the numeric column the chart needs:
+
+```kusto
+// Log volume by level over time
+FindableLogs_CL
+| summarize count() by bin(TimeGenerated, 15m), Level
+| render columnchart
+```
+
+```kusto
+// Error rate trend
+FindableLogs_CL
+| where Level == "error"
+| summarize Errors = count() by bin(TimeGenerated, 1h)
+| render timechart
+```
+
+Numbers embedded in the `Properties` JSON can be extracted and charted the same way — no schema change needed:
+
+```kusto
+FindableLogs_CL
+| extend DurationMs = todouble(parse_json(Properties).durationMs)
+| where isnotnull(DurationMs)
+| summarize avg(DurationMs) by bin(TimeGenerated, 15m)
+| render timechart
+```
 
 ### Reliability Guarantees
 

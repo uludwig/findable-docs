@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Findable API",
-    "version": "3.2.38",
+    "version": "3.2.41",
     "description": "REST API for the Findable AI Assistant platform.\n\n## Authentication\n\nAll endpoints (except `/server/setup` and `/server/bootstrap`) require a valid **Azure AD / Entra ID Bearer token**.\n\n### Obtaining a token\n\n1. Register (or reuse) an **App Registration** in Azure Entra ID for your client.\n2. Under **API Permissions**, add a delegated permission for the Findable server app:\n   `api://<SERVER_CLIENT_ID>/User.Read`\n3. Acquire a token using MSAL (or any OAuth 2.0 library) with the following parameters:\n\n| Parameter | Value |\n|-----------|-------|\n| Authority | `https://login.microsoftonline.com/<TENANT_ID>` |\n| Client ID | Your client app registration ID |\n| Scope | `api://<SERVER_CLIENT_ID>/User.Read` |\n| Grant type | Authorization Code (interactive) or Client Credentials (daemon) |\n\n### Example (MSAL Node.js)\n\n```javascript\nconst { ConfidentialClientApplication } = require(\"@azure/msal-node\");\n\nconst cca = new ConfidentialClientApplication({\n  auth: {\n    clientId: \"<YOUR_CLIENT_ID>\",\n    authority: \"https://login.microsoftonline.com/<TENANT_ID>\",\n    clientSecret: \"<YOUR_CLIENT_SECRET>\",\n  },\n});\n\nconst result = await cca.acquireTokenByClientCredential({\n  scopes: [\"api://<SERVER_CLIENT_ID>/.default\"],\n});\n\n// Use result.accessToken in the Authorization header\n```\n\n### Using the token\n\nInclude the token in every request:\n```\nAuthorization: Bearer <access_token>\n```\n\n### Roles\n\nAccess is determined by Azure AD group membership configured in the application settings:\n- **Admin (Owner)**: Full access to all endpoints including admin operations\n- **Contributor**: Can create and manage chats, files, and content\n- **User**: Read access to entitled chats and resources\n",
     "contact": {
       "name": "Findable Support"
@@ -1172,7 +1172,8 @@
             "type": "string"
           },
           "aiOptions": {
-            "description": "AI inference options — undefined means use system defaults",
+            "description": "AI inference options — omitted keeps the stored value on update; explicit null clears the field (revert to system defaults)",
+            "nullable": true,
             "type": "object",
             "properties": {
               "maxTokens": {
@@ -10792,8 +10793,8 @@
         "tags": [
           "Data Platform"
         ],
-        "summary": "Create or update a connection",
-        "description": "Creates or updates a data platform connection with scope and ACL handling.",
+        "summary": "Create a connection",
+        "description": "Creates a data platform connection with scope and ACL handling. Create-only — updating an existing connection returns 409; use PUT /dataplatform/connections/{id} instead.\n",
         "requestBody": {
           "required": true,
           "content": {
@@ -10817,6 +10818,9 @@
           },
           "400": {
             "description": "Name and type are required"
+          },
+          "409": {
+            "description": "Connection already exists"
           }
         }
       }
@@ -10853,6 +10857,54 @@
           }
         }
       },
+      "put": {
+        "tags": [
+          "Data Platform"
+        ],
+        "summary": "Update a connection",
+        "description": "Full-replace update (owners/contributors only). Scope is immutable here — it only changes through the migrate-scope endpoint. [REDACTED] credential placeholders are restored from the stored connection.\n",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataConnection"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated connection (sanitized)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataConnection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload"
+          },
+          "403": {
+            "description": "Not an owner or contributor"
+          },
+          "404": {
+            "description": "Connection not found"
+          }
+        }
+      },
       "delete": {
         "tags": [
           "Data Platform"
@@ -10874,6 +10926,57 @@
           },
           "500": {
             "description": "Delete failed"
+          }
+        }
+      }
+    },
+    "/dataplatform/connections/{id}/migrate-scope": {
+      "post": {
+        "tags": [
+          "Data Platform"
+        ],
+        "summary": "Migrate a connection to a different scope",
+        "description": "Promote-only (personal -> shared). Scope cannot be changed via the normal upsert; this is the only path. Requires owner/admin and that migration is enabled for connections. Connections are flat, so there is no descendant cascade.\n",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "shared"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Migration result"
+          },
+          "400": {
+            "description": "Invalid scope change"
+          },
+          "403": {
+            "description": "Migration not enabled or not an owner"
+          },
+          "404": {
+            "description": "Connection not found"
           }
         }
       }
@@ -10918,7 +11021,7 @@
           "Data Platform"
         ],
         "summary": "Test a connection",
-        "description": "Tests connectivity to the specified data platform connection.",
+        "description": "Tests connectivity to the specified data platform connection. Requires read entitlement on the connection.",
         "parameters": [
           {
             "in": "path",
@@ -10932,6 +11035,15 @@
         "responses": {
           "200": {
             "description": "Connection test result"
+          },
+          "401": {
+            "description": "User not authenticated"
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Connection not found"
           },
           "500": {
             "description": "Test failed"
@@ -12153,8 +12265,9 @@
         "tags": [
           "Settings"
         ],
-        "summary": "Set default AI model endpoint (admin)",
-        "description": "Marks the specified model endpoint as the system default. Admin only.",
+        "summary": "Set default AI model endpoint (admin, deprecated)",
+        "deprecated": true,
+        "description": "Legacy isDefault flag writer. The system default chat model is now selected via appSettings.defaultChatModelEndpointId (Admin → AI → Default Chat Model); the flag is only honored as a fallback when that setting is unset. Admin only.",
         "parameters": [
           {
             "in": "path",

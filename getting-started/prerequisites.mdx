@@ -5,7 +5,7 @@ description: "Runtime, services, and tooling required to run Findable plus the p
 
 Findable is an enterprise-grade AI assistant platform designed to make AI accessible to corporate users. Built with a [React](https://react.dev/) frontend and [Node.js](https://nodejs.org/) backend, it's optimized for [Azure](https://portal.azure.com/) deployment with [Microsoft Entra ID](https://entra.microsoft.com/) authentication.
 
-**Version:** 3.2.38 | **Node.js:** ≥24 | **License:** Private
+**Version:** 3.2.41 | **Node.js:** ≥24 | **License:** Private
 
 ### Key Features
 
@@ -15,6 +15,7 @@ Findable is an enterprise-grade AI assistant platform designed to make AI access
 - **Model Context Protocol (MCP)** - Extensible tool integration framework
 - **Streaming Responses** - Real-time SSE streaming for all providers
 - **Memory System** - Persistent conversation memory with Mem0 integration
+- **Image Generation** - Dedicated image model endpoints (Azure AI / OpenAI `gpt-image-1`, xAI `grok-2-image`, Gemini image models) power the `generate_image` chat tool
 
 #### Enterprise Platform
 - **AI-Powered Intranet** - Organize managed and personal AI chats into navigable pages and sections, creating a structured knowledge hub for your organization
@@ -48,7 +49,8 @@ Findable is an enterprise-grade AI assistant platform designed to make AI access
 
 #### User Experience
 - **Prompt Library** - Personal and organizational prompt templates with variables, system sources, and conditional logic
-- **Rich Content Rendering** - Markdown, code syntax highlighting, LaTeX math (KaTeX), Mermaid diagrams, Recharts visualizations
+- **Rich Content Rendering** - Markdown, code syntax highlighting, LaTeX math (KaTeX), Mermaid diagrams, Recharts visualizations — with SVG/PNG export buttons and live SVG code-fence previews
+- **AI-Generated Files** - Agents save CSV/JSON/Markdown/HTML/SVG files, Word documents (template fill or freeform markdown), Excel workbooks, and generated images to the user's personal storage with downloadable file chips
 - **File Upload** - Azure Blob storage with automatic document indexing
 - **Favorites & Navigation** - Customizable pages and sections with drag-and-drop ordering
 - **Feedback System** - Thumbs up/down with detailed feedback forms and admin review

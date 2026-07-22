@@ -71,7 +71,8 @@
               "tools-mcp/tool-providers",
               "tools-mcp/tool-setup",
               "tools-mcp/web-search-rag",
-              "tools-mcp/memory-system"
+              "tools-mcp/memory-system",
+              "tools-mcp/file-image-generation"
             ]
           },
           {
