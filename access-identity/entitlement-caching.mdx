@@ -1,0 +1,81 @@
+---
+title: "Entitlement Caching & Freshness"
+description: "How Findable serves entitled lists safely across multiple instances with delta refresh, SSE invalidation hints, and copy-on-break inheritance."
+---
+
+The entitlement service is the read path that answers "what is this user allowed to see?" for chats, pages, prompts, prompt groups, flows, datasources, MCP servers, tools, AI search endpoints, and model endpoints. It runs on every list fetch, so it has to be fast **and** correct across multiple app-service instances.
+
+### The Cache
+
+Per-user **entitled-list cache**, keyed `container:upn`, with per-container TTLs pulled from the entitlement registry (e.g. 180 s for chats, 600 s for admin endpoint lists), plus a parent-document cache for inheritance walks.
+
+Freshness is **incremental, not TTL-or-flush**: cache entries carry a Cosmos `_ts` **watermark**, and a cache hit runs a **delta refresh** instead of serving potentially stale data or re-scanning the container.
+
+### The Delta Path
+
+`getEntitledList` → `refreshCacheEntry` (primitives in `src/user/entitlementdelta.ts`):
+
+1. **Query only what changed** — documents with `_ts >= watermark` in the target container *and its inheritance ancestors* (per the registry's edges: a `pages` write is a delta source for `chat`), plus ids from the **deletions log** (hard deletes never surface in `_ts` queries; `deleteItemTracked` records them in the TTL-bound `deletions` container).
+2. **Nothing changed (the common case)** — advance the watermark and serve the cached list; requests within 5 s of the last delta serve straight from memory (`MIN_DELTA_INTERVAL_MS` throttle).
+3. **Expand the dirty subtree** — a parent ACL edit can newly entitle children the user has never seen (their own `_ts` never moved), so changed docs are expanded through the inheritance edges (`expandDirtySet`, cycle-safe BFS) to fetch every doc whose verdict may have changed.
+4. **Re-resolve and merge** — only the dirty docs are re-run through the resolver (against a pool of cached + freshly fetched docs, so `page→page→chat` chains resolve in memory) and merged into the cached list by id: flipped-to-not-entitled verdicts and deletions fall out, new entitlements appear. Merges are idempotent — the watermark is set 5 s behind the clock (`WATERMARK_OVERLAP_SEC`) to cover clock skew and replica lag, and replays converge by id.
+5. **Any anomaly falls back to a full scan** — oversized delta (> 200 docs, where a scan is cheaper), expansion budget exceeded, invalid watermark, or any query error. The delta path can degrade but never fail a request.
+
+**Why the TTL still exists:** delta refreshes deliberately do **not** extend an entry's TTL. AAD group-membership changes produce no entity write and are invisible to watermark queries — the TTL is the backstop bound on that staleness.
+
+### Multi-Instance Correctness
+
+Watermarks compare against Cosmos server-assigned `_ts`, which every instance sees identically — unlike the old in-process flush, an ACL write on instance A is picked up by instance B's next delta refresh. In-process flushes on ACL-affecting writes still exist but are now an optimization, not the correctness mechanism.
+
+### Live Invalidation Hints (SSE + Polling)
+
+`src/user/entitlementEventsController.ts`, consumed by the app-level `useEntitlementEvents` hook:
+
+- One broadcaster per instance computes a per-container **version map** every 10 s — max `_ts` across each container and its deletion-log rows, fanned in across inheritance ancestors. Versions derive from the shared `_ts` stream (not per-instance counters), so every instance answers identically with no bus.
+- `GET /user/entitlement-events` streams hints over SSE (`connected` with the full map, `changed` with increments); `GET /user/entitlement-versions` serves the same map for the polling fallback.
+- **Push hints, never data**: clients learn "container X changed" and quietly refetch the entitled list — the GET endpoint's delta path remains the only source of truth. A client that misses events (sleep, reconnect) is still correct via polling, mount refetches, and the TTL; the channel only shrinks cross-user drift from TTL-minutes to ~seconds.
+
+### Client Cache-Control Semantics
+
+Translated once in `entitledListOptionsFromRequest`, honored by every dedicated list route:
+
+| Request header | Behavior | When to use |
+|----------------|----------|-------------|
+| *(default)* | Serve from cache with a delta refresh | Routine list fetches — do not send explicit no-cache on every request |
+| `Cache-Control: no-cache` / `Pragma: no-cache` | **Revalidate now** — force a delta refresh even inside the 5 s throttle window, keeping the entry | Immediately after ACL-affecting saves; the saver's own write has `_ts >=` any watermark so it's guaranteed visible |
+| `Cache-Control: no-store` | **True bypass** — full scan + resolver, entry replaced | Support / debugging escape hatch |
+
+`no-cache` used to force a full-corpus recompute under the old cache; with the delta path it is now cheap and safe to use routinely after edits.
+
+### hideFromCatalog Contract
+
+`hideFromCatalog: boolean` on `IEntitledEntity` **suppresses discovery only, never direct access**. `checkEntityAccess` passes for anyone in the ACL — including read-only viewers — so hidden entities remain readable and usable by id (flow entry prompts, subflows, and connections referenced from entities a viewer can see keep working).
+
+| `hideFromCatalog` | End-user discovery | Owners / contributors / admins | Direct access by id (anyone in the ACL) |
+|---|---|---|---|
+| `false` (default) | Visible in catalogs, recommendations, and searches | Visible | ✅ |
+| `true` | **Suppressed** in catalogs, recommendations, and searches | Still visible — they may need to manage the entity | ✅ |
+
+**Where it applies:**
+
+- **Entitlement service** filters hidden entities out of `user`-only entitled-list results by default. Direct access checks always pass `includeHidden` so viewers in the ACL are never blocked by id.
+- **Per-container viewer delivery** (`includeHiddenForViewers` in the entitlement registry) — containers can opt to deliver hidden entities to read-only viewers in entitled lists, making visibility a client concern. **Prompts** opt in: viewers receive hidden prompts (so entry prompts, heroes, and by-id references resolve client-side), and the Prompt Library hides them behind a **"show hidden"** toggle (`usePrompts` splits catalog-visible `prompts` from the complete `allPrompts`).
+- **AI Recommendation service** applies a stricter rule: hidden entities are dropped from the prompt / chat / page catalogs sent to the LLM **for everyone** (including admins and owners), so they are never recommended as a starting point. Hero prompts and other discovery surfaces likewise always exclude hidden templates.
+
+### Dynamic Inheritance, Moves & Deletes
+
+Inheritance is **resolved at read time, never denormalized onto children**. Changing a parent's ACL (or breaking its inheritance) immediately changes the *effective* permissions of every descendant that inherits — no migration, no fan-out writes. Children with their own explicit fields are untouched (per field).
+
+Practical consequences:
+
+- **Copy-on-break preserves access** — when a child breaks inheritance (`inheritedFrom.field = false` or clearing the parent link) the parent's currently effective values for that field are copied to the child before it becomes independent, so an owner never accidentally locks themselves out.
+- **Move semantics** — a move preserves the child's *deliberate* explicit ACLs (fields the user set) and picks up inheritance from the new parent for anything not explicitly set. `MovePermissionsDialog` surfaces the diff before the move; the wire form is `aclOnMove` on move endpoints.
+- **Delete blocking** — delete confirmations show entitled descendants; **cascade risk for invisible children** (children the deleter can't see) blocks the delete until an admin resolves it.
+- **Derived entitlement flags** on responses (`canEdit`, `canDelete`, `entitledRoles`) are response-only and never persisted.
+- **Wire canonicalization** — ACL fields are canonicalized on write; clients should never apply `?? true` fallbacks. The wire form is the source of truth.
+
+### Write API Semantics
+
+`PUT` and `PATCH` on chats, pages, prompts, and flows both **merge** provided fields into the existing document (prefer `PATCH` for partial updates); `id`, `createdAt`, `createdBy`, and `scope` are always preserved (scope changes only via the dedicated migrate-scope endpoints). Sending a whole entitled document back is safe — services strip the derived flags — but targeted payloads are preferred. `parentId: null` / `pageId: ''` are the wire forms of "move to root"; absent keys keep the current parent.
+
+Write responses remove most refetch needs: single-entity saves return the entitled document, and bulk reorder (`POST /prompts/reorder`) returns the updated documents in `items` — so sort-only drags and leaf saves need no follow-up list fetch.

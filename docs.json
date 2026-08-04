@@ -80,6 +80,7 @@
             "pages": [
               "access-identity/role-based-access",
               "access-identity/entity-scopes",
+              "access-identity/entitlement-caching",
               "access-identity/chat-logging-audit",
               "access-identity/azure-app-registration"
             ]
@@ -91,6 +92,7 @@
               "operations/ci-cd",
               "operations/capacity-limits",
               "operations/notifications",
+              "operations/scheduled-jobs",
               "operations/azure-monitor-logging",
               "operations/troubleshooting"
             ]

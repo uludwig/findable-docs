@@ -47,6 +47,7 @@ In **Admin → Personal Workspace** ([`#/admin/workspace`], setting key `adminNa
 | `personalFileLocation` | `OneDrive` | Default is `AzureFiles` |
 | `oneDriveFolderName` | e.g. `AIAssistant` | Default `AIAssistant`. This is the root folder created in each user's OneDrive. |
 | `oneDriveSharedIndexName` | e.g. `personal-onedrive-shared` | Default `personal-onedrive-shared`. The shared, ACL-filtered Azure AI Search index. |
+| `documentIntelligenceTimeoutSeconds` | e.g. `60` | Default `60` (range 5–600). Maximum time the server waits for Azure Document Intelligence to extract text from an uploaded file (PDF / Office / image) during indexing. Files whose analysis exceeds the timeout are indexed without extracted text. Also settable via the `DOCUMENT_INTELLIGENCE_TIMEOUT_SECONDS` environment variable. |
 
 The shared index is created lazily on the first upload — no manual provisioning step is required.
 

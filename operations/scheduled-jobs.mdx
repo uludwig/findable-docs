@@ -1,0 +1,34 @@
+---
+title: "Scheduled Jobs"
+description: "Configure recurring platform jobs — SharePoint ACL resync, personal-folder cleanup, chat log retention — from the Admin → Scheduled Jobs page."
+---
+
+Findable runs a small set of recurring background jobs on the server (implemented with `node-cron`). Their schedules and enabled state are managed from **Admin → Scheduled Jobs** (`#/admin/jobs`) with a visual cron picker; changes take effect on the settings auto-refresh cycle, no restart required.
+
+### Available Jobs
+
+| Job | Setting root | Default cadence | What it does |
+|-----|--------------|-----------------|--------------|
+| **SharePoint ACL Resync** | `sharePointAclResyncJob` | Daily off-hours | Triggers indexer `/resync` with `options: ["permissions"]` on SharePoint data sources whose parent-scope permissions may have changed since the last run. Complements the incremental ACL sync on `2026-05-01-preview` indexers, which only catches items with *unique* permissions. |
+| **Personal Folder Retention** | `personalFolderRetentionJob` | Hourly | Purges unused per-user personal folders older than `personalFolderRetentionInHours` (default 72 h, `0` disables). |
+| **Generated File Retention** | `generatedFilesRetentionJob` | Hourly | Ages out generated files on the **blob backend only** past `generatedFilesRetentionInHours`. OneDrive-backed generated files follow the user's app-folder lifecycle under M365 governance. |
+| **Chat Log Retention** | `chatLogRetentionJob` | Daily | Deletes chat log rows older than the configured retention window (feature-flag gated; see [Chat Logging & Audit](/access-identity/chat-logging-audit)). |
+| **Deletions Log Cleanup** | *(automatic)* | Container TTL | The `deletions` container Cosmos TTL retires hard-delete tombstones once every user's entitlement cache has had a chance to observe them. Not user-configurable. |
+
+### Cron Schedule Picker
+
+The admin page renders a **cron schedule picker** that composes the standard `minute hour day-of-month month day-of-week` expression from human-readable dropdowns and shows the next few run times inline. The raw expression is also editable for anything the composer can't express (e.g. `*/15 * * * *`).
+
+Each job's settings live under a common shape:
+
+| Setting | Description |
+|---------|-------------|
+| `enabled` | Master toggle |
+| `cronExpression` | Standard 5-field cron expression (server clock, UTC) |
+| `lastRunAt` / `lastRunStatus` / `lastRunMessage` | Observability — populated by the runner, read-only from the UI |
+
+### Reliability
+
+- Jobs run **per-instance** but coordinate through Cosmos DB — each run acquires a short-lived lease document keyed by `jobId` so two instances don't duplicate work.
+- Failures are logged (and shipped via [Azure Monitor Logging](/operations/azure-monitor-logging) if enabled) and surfaced in `lastRunStatus`. The next scheduled tick still runs — jobs are idempotent by design.
+- Manual **Run now** buttons on the admin page invoke the same job body outside the schedule for admin-triggered ad-hoc runs (e.g. after a bulk SharePoint ACL change).

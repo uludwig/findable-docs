@@ -59,6 +59,12 @@ ACL is controlled by **three independent toggles**:
 4. Search queries pass the user's identity for permission filtering
 5. Only documents the user has access to in SharePoint are returned
 
+If the client cannot supply the search token (e.g. missing admin consent for the Azure Search `user_impersonation` scope, or a silent MSAL failure), ACL-protected sources are **skipped** for that request and the chat shows a "sources unavailable" notice asking the user to refresh / re-sign-in — they are never silently queried without trimming.
+
+> **Group membership limit:** the app has been tested for users with **200 or fewer group memberships**. Native permission filtering evaluates the group claims carried in the user's Azure Search token; users who are members of more than 200 groups may hit the Entra ID token groups-claim overage and could see incomplete group-based access. If your tenant has such users, verify their access explicitly before relying on group-scoped ACLs.
+
+> **ACL / non-ACL mismatch protection:** `permissionFilterOption` cannot be changed on an existing index. If a source's ACL setting is flipped after its index was provisioned with the opposite setting, re-provisioning fails with a descriptive error instead of silently serving untrimmed (or always-empty) results — delete the search resources for that index and re-provision to rebuild it with the matching ACL posture.
+
 **When ACL is disabled (default):**
 
 1. `UserIds` and `GroupIds` fields exist in the index but are empty

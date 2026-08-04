@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Findable API",
-    "version": "3.2.41",
+    "version": "3.2.46",
     "description": "REST API for the Findable AI Assistant platform.\n\n## Authentication\n\nAll endpoints (except `/server/setup` and `/server/bootstrap`) require a valid **Azure AD / Entra ID Bearer token**.\n\n### Obtaining a token\n\n1. Register (or reuse) an **App Registration** in Azure Entra ID for your client.\n2. Under **API Permissions**, add a delegated permission for the Findable server app:\n   `api://<SERVER_CLIENT_ID>/User.Read`\n3. Acquire a token using MSAL (or any OAuth 2.0 library) with the following parameters:\n\n| Parameter | Value |\n|-----------|-------|\n| Authority | `https://login.microsoftonline.com/<TENANT_ID>` |\n| Client ID | Your client app registration ID |\n| Scope | `api://<SERVER_CLIENT_ID>/User.Read` |\n| Grant type | Authorization Code (interactive) or Client Credentials (daemon) |\n\n### Example (MSAL Node.js)\n\n```javascript\nconst { ConfidentialClientApplication } = require(\"@azure/msal-node\");\n\nconst cca = new ConfidentialClientApplication({\n  auth: {\n    clientId: \"<YOUR_CLIENT_ID>\",\n    authority: \"https://login.microsoftonline.com/<TENANT_ID>\",\n    clientSecret: \"<YOUR_CLIENT_SECRET>\",\n  },\n});\n\nconst result = await cca.acquireTokenByClientCredential({\n  scopes: [\"api://<SERVER_CLIENT_ID>/.default\"],\n});\n\n// Use result.accessToken in the Authorization header\n```\n\n### Using the token\n\nInclude the token in every request:\n```\nAuthorization: Bearer <access_token>\n```\n\n### Roles\n\nAccess is determined by Azure AD group membership configured in the application settings:\n- **Admin (Owner)**: Full access to all endpoints including admin operations\n- **Contributor**: Can create and manage chats, files, and content\n- **User**: Read access to entitled chats and resources\n",
     "contact": {
       "name": "Findable Support"
@@ -5249,7 +5249,7 @@
             "title": "TokenUsage",
             "description": "LLM token usage breakdown for a single call or aggregated across calls"
           },
-          "_ttl": {
+          "ttl": {
             "description": "Cosmos DB per-item TTL in seconds",
             "type": "integer"
           }
@@ -5350,7 +5350,7 @@
             "title": "TokenUsage",
             "description": "LLM token usage breakdown for a single call or aggregated across calls"
           },
-          "_ttl": {
+          "ttl": {
             "description": "Cosmos DB per-item TTL in seconds",
             "type": "integer"
           }
@@ -9201,18 +9201,45 @@
         "tags": [
           "User"
         ],
-        "summary": "List entitled chats",
-        "description": "Returns all chats the authenticated user is entitled to access based on ACL.",
+        "deprecated": true,
+        "summary": "List entitled chats (moved)",
+        "description": "Moved to GET /chats — responds with a 308 permanent redirect.",
+        "responses": {
+          "308": {
+            "description": "Redirect to /chats"
+          }
+        }
+      }
+    },
+    "/user/pages": {
+      "get": {
+        "tags": [
+          "User"
+        ],
+        "deprecated": true,
+        "summary": "List entitled pages (moved)",
+        "description": "Moved to GET /pages — responds with a 308 permanent redirect.",
+        "responses": {
+          "308": {
+            "description": "Redirect to /pages"
+          }
+        }
+      }
+    },
+    "/user/entitlement-events": {
+      "get": {
+        "tags": [
+          "User"
+        ],
+        "summary": "Entitlement invalidation-hint stream (SSE)",
+        "description": "Multiplexed Server-Sent Events stream of entitlement change hints. Emits `connected` with the full per-container version map, then `changed` events with the changed subset. Hints only — clients refetch the entitled list endpoints to get actual data.",
         "responses": {
           "200": {
-            "description": "Array of entitled chat objects",
+            "description": "SSE stream (text/event-stream)",
             "content": {
-              "application/json": {
+              "text/event-stream": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Chat"
-                  }
+                  "type": "string"
                 }
               }
             }
@@ -9223,26 +9250,19 @@
         }
       }
     },
-    "/user/pages": {
+    "/user/entitlement-versions": {
       "get": {
         "tags": [
           "User"
         ],
-        "summary": "List entitled pages",
-        "description": "Returns navigation pages the user is entitled to access. Cached for 5 minutes.",
+        "summary": "Entitlement change versions (polling fallback)",
+        "description": "Per-container last-changed versions derived from Cosmos _ts. Clients diff against their last-seen map and refetch changed containers when the SSE stream is unavailable.",
         "responses": {
           "200": {
-            "description": "Array of page objects",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Page"
-                  }
-                }
-              }
-            }
+            "description": "Version map"
+          },
+          "401": {
+            "description": "Not authenticated"
           }
         }
       }
@@ -9800,6 +9820,70 @@
         "responses": {
           "200": {
             "description": "All notifications marked as read"
+          }
+        }
+      }
+    },
+    "/user/notifications/{notificationId}/dismiss": {
+      "patch": {
+        "tags": [
+          "User"
+        ],
+        "summary": "Dismiss a notification",
+        "description": "Soft-deletes a notification — it no longer appears in list results.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "notificationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Notification dismissed"
+          },
+          "404": {
+            "description": "Notification not found"
+          }
+        }
+      }
+    },
+    "/user/notifications/dismiss-all": {
+      "patch": {
+        "tags": [
+          "User"
+        ],
+        "summary": "Dismiss all notifications by status",
+        "description": "Soft-deletes all notifications matching the given statuses\n(default when omitted: completed + expired). Pending notifications\npast their expiry count as expired.\n",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "statuses": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "pending",
+                        "completed",
+                        "expired"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Matching notifications dismissed; returns the count"
           }
         }
       }
@@ -11051,6 +11135,66 @@
         }
       }
     },
+    "/dataplatform/connections/{id}/schema-cache/refresh": {
+      "post": {
+        "tags": [
+          "Data Platform"
+        ],
+        "summary": "Refresh the cached schema metadata for a connection",
+        "description": "Owner/contributor only. Drops any cached schema metadata and re-inspects the live database, repopulating the cache. Returns status/counts only — never raw cache documents.\n",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cache refreshed"
+          },
+          "403": {
+            "description": "Not an owner/contributor"
+          },
+          "404": {
+            "description": "Connection not found"
+          }
+        }
+      }
+    },
+    "/dataplatform/connections/{id}/schema-cache": {
+      "delete": {
+        "tags": [
+          "Data Platform"
+        ],
+        "summary": "Clear the cached schema metadata for a connection",
+        "description": "Owner/contributor only. Removes all cached schema metadata entries; the next inspection reads live.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cache cleared"
+          },
+          "403": {
+            "description": "Not an owner/contributor"
+          },
+          "404": {
+            "description": "Connection not found"
+          }
+        }
+      }
+    },
     "/dataplatform/connections/type/{type}": {
       "get": {
         "tags": [
@@ -11424,6 +11568,21 @@
         }
       }
     },
+    "/teams/appicon": {
+      "get": {
+        "tags": [
+          "Teams"
+        ],
+        "summary": "App icon (PNG) referenced by Teams Adaptive Cards",
+        "description": "Public because Teams clients fetch card images without credentials. Serves the same resolved icon as the Teams app package (custom upload → admin branding → stock asset).",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Icon image"
+          }
+        }
+      }
+    },
     "/teams/info": {
       "get": {
         "tags": [
@@ -11634,6 +11793,36 @@
         "responses": {
           "200": {
             "description": "Array of entitlements"
+          }
+        }
+      }
+    },
+    "/sharepoint/entitlements/{id}": {
+      "delete": {
+        "tags": [
+          "SharePoint"
+        ],
+        "summary": "Delete a SharePoint entitlement record (admin only)",
+        "description": "Removes the stored entitlement record. Does not revoke the granted Graph permission.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted"
+          },
+          "403": {
+            "description": "Admin access required"
+          },
+          "404": {
+            "description": "Entitlement not found"
           }
         }
       }
@@ -12706,237 +12895,6 @@
         }
       }
     },
-    "/settings/datasources": {
-      "get": {
-        "tags": [
-          "Datasources"
-        ],
-        "summary": "List datasources (settings)",
-        "description": "Returns all datasource catalog entries the user is entitled to, with secrets redacted.",
-        "responses": {
-          "200": {
-            "description": "Array of datasource objects",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/DataSourceCatalog"
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "Datasources"
-        ],
-        "summary": "Create a datasource (settings)",
-        "description": "Creates a new datasource catalog entry via the resource-scoped settings pattern.\nThe creator becomes the default owner. Built-in origin cannot be set via API.\n",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DataSourceCatalog"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Datasource created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DataSourceCatalog"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Insufficient permissions"
-          }
-        }
-      }
-    },
-    "/settings/datasources/{id}": {
-      "get": {
-        "tags": [
-          "Datasources"
-        ],
-        "summary": "Get a datasource by ID (settings)",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Datasource object",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DataSourceCatalog"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Access denied"
-          },
-          "404": {
-            "description": "Not found"
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "Datasources"
-        ],
-        "summary": "Replace a datasource (settings)",
-        "description": "Replaces a datasource. Built-in datasources have locked origin that cannot be changed.",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DataSourceCatalog"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Datasource replaced",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DataSourceCatalog"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Access denied"
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "Datasources"
-        ],
-        "summary": "Partially update a datasource (settings)",
-        "description": "Merges provided fields into the existing datasource. Origin cannot be changed.",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DataSourceCatalog"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Datasource patched",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DataSourceCatalog"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Access denied"
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Datasources"
-        ],
-        "summary": "Delete a datasource (settings)",
-        "description": "Deletes a datasource. Built-in datasources cannot be deleted.",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Datasource deleted"
-          },
-          "403": {
-            "description": "Access denied or cannot delete built-in datasource"
-          },
-          "404": {
-            "description": "Not found"
-          }
-        }
-      }
-    },
-    "/settings/datasources/default/{id}": {
-      "put": {
-        "tags": [
-          "Datasources"
-        ],
-        "summary": "Set default datasource (admin)",
-        "description": "Marks the specified datasource as the system default. Admin only.",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Default datasource set"
-          },
-          "403": {
-            "description": "Admin privileges required"
-          }
-        }
-      }
-    },
     "/settings/refresh-all": {
       "post": {
         "tags": [
@@ -13163,7 +13121,7 @@
           "Prompts"
         ],
         "summary": "Update a prompt or group",
-        "description": "Full replacement update. Only owners can modify ACL fields.",
+        "description": "Merges provided fields into the existing prompt or group (same\nsemantics as PATCH; prefer PATCH for partial updates). Only owners\ncan modify ACL fields. Preserves id, createdAt, createdBy, and scope.\n",
         "parameters": [
           {
             "in": "path",
@@ -13194,6 +13152,65 @@
         "responses": {
           "200": {
             "description": "Prompt updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/PromptTemplate"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PromptGroup"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Access denied"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Prompts"
+        ],
+        "summary": "Partial update a prompt or group",
+        "description": "Merges provided fields into the existing prompt or group. Only owners\ncan modify ACL fields. Preserves id, createdAt, createdBy, and scope.\n",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/PromptTemplate"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PromptGroup"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Prompt patched",
             "content": {
               "application/json": {
                 "schema": {
@@ -13320,6 +13337,14 @@
                         },
                         "parentId": {
                           "type": "string"
+                        },
+                        "aclOnMove": {
+                          "type": "string",
+                          "enum": [
+                            "inherit",
+                            "keep"
+                          ],
+                          "description": "What happens to the item's ACL when it is moved into a group. Omitted = server default (adopt the group's permissions unless the item carries a deliberately configured ACL). Response reports keptCustomAcl.\n"
                         }
                       }
                     }
@@ -13331,7 +13356,7 @@
         },
         "responses": {
           "200": {
-            "description": "Prompts reordered"
+            "description": "Prompts reordered. Returns counts (updated/skipped/keptCustomAcl) plus `items` — the updated documents with the caller's derived entitlement flags attached, so clients can sync state without a full-list refetch after sort-only drags.\n"
           }
         }
       }
@@ -13680,8 +13705,8 @@
         "tags": [
           "Pages"
         ],
-        "summary": "Update a page (full replace)",
-        "description": "Replaces the page. Only owners can modify ACL fields. Supports promoting personal to shared.",
+        "summary": "Update a page",
+        "description": "Merges provided fields into the existing page (same semantics as PATCH; prefer PATCH for partial updates). Only owners can modify ACL fields.",
         "parameters": [
           {
             "in": "path",
@@ -14778,6 +14803,34 @@
         }
       }
     },
+    "/jobs/sharepoint-acl-resync": {
+      "post": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Trigger SharePoint ACL permissions resync",
+        "description": "Runs a permissions-only /resync (+ follow-up indexer run) for every ACL-enabled SharePoint indexer discovered from chats' dataSources. Re-reads permission metadata only — no re-chunking or re-embedding.\n",
+        "responses": {
+          "200": {
+            "description": "Resync results per indexer"
+          }
+        }
+      }
+    },
+    "/jobs/sharepoint-acl-resync/targets": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "List ACL-enabled SharePoint indexers a resync would touch",
+        "description": "Discovery-only (no resync is triggered) — used by the admin Scheduled Jobs page.",
+        "responses": {
+          "200": {
+            "description": "Discovered target count and indexer names"
+          }
+        }
+      }
+    },
     "/humaninput": {
       "get": {
         "tags": [
@@ -15283,8 +15336,8 @@
         "tags": [
           "Flows"
         ],
-        "summary": "Update a flow (full replace)",
-        "description": "Replaces the flow configuration. Only owners can modify ACL fields.",
+        "summary": "Update a flow",
+        "description": "Merges provided fields into the existing flow (same semantics as PATCH; prefer PATCH for partial updates). Only owners can modify ACL fields.",
         "parameters": [
           {
             "in": "path",
@@ -15486,8 +15539,8 @@
         "tags": [
           "Flows"
         ],
-        "summary": "Display external human-input response form (authenticated)",
-        "description": "Renders an HTML form for submitting human input via a secure token link.\nThis is the authenticated variant; the public equivalent lives on the\npublic flow router and does not require a Bearer token.\n",
+        "summary": "Display external human-input response form (public)",
+        "description": "Renders an HTML form for submitting human input via an external link (email/webhook).\nUses a secure token instead of authentication.\n",
         "security": [],
         "parameters": [
           {
@@ -15496,8 +15549,7 @@
             "required": true,
             "schema": {
               "type": "string"
-            },
-            "description": "Secure one-time token issued by the notification provider"
+            }
           }
         ],
         "responses": {
@@ -15512,7 +15564,7 @@
             }
           },
           "400": {
-            "description": "Missing or invalid token"
+            "description": "Missing token"
           },
           "404": {
             "description": "Token invalid or expired"
@@ -15523,8 +15575,8 @@
         "tags": [
           "Flows"
         ],
-        "summary": "Submit external human-input response (authenticated)",
-        "description": "Submits a response to a paused flow execution via an external form or JSON payload.\nAccepts either structured form values (from VariableFillDialog) or a plain text response.\n",
+        "summary": "Submit external human-input response (public)",
+        "description": "Submits a response to a paused flow execution via external form or JSON payload. No auth required.",
         "security": [],
         "requestBody": {
           "required": true,
@@ -15537,16 +15589,13 @@
                 ],
                 "properties": {
                   "token": {
-                    "type": "string",
-                    "description": "Secure one-time token"
+                    "type": "string"
                   },
                   "formValues": {
-                    "type": "object",
-                    "description": "Structured form values (key-value pairs)"
+                    "type": "object"
                   },
                   "response": {
-                    "type": "string",
-                    "description": "Plain text response (alternative to formValues)"
+                    "type": "string"
                   }
                 }
               }
@@ -16639,8 +16688,8 @@
         "tags": [
           "Chats"
         ],
-        "summary": "Update a chat (full replace)",
-        "description": "Replaces the chat configuration. Only owners can modify ACL fields.\nIf `dataSources[]` is provided, all `datasourceId` references are validated\nagainst the datasources catalog — invalid references return 400.\n",
+        "summary": "Update a chat",
+        "description": "Merges provided fields into the existing chat (same semantics as PATCH;\nprefer PATCH for partial updates). Only owners can modify ACL fields.\nIf `dataSources[]` is provided, all `datasourceId` references are validated\nagainst the datasources catalog — invalid references return 400.\n",
         "parameters": [
           {
             "in": "path",
@@ -18121,7 +18170,7 @@
           "Cosmos"
         ],
         "summary": "Set default item in a container",
-        "description": "Sets the specified item as the default (removes default flag from all others).\n\n**Container access tiers:**\n- **Blocked** (use dedicated routers): `flows`, `chat`, `pages`, `dataconnections`, `prompts`, `aisearchendpoints`, `aimodelendpoints`, `mcpservers`, `aitoolproviders`\n- **Blocked** (use /user/* endpoints): `chatlog`, `feedback`, `usersettings`, `userfavorites`, `usernotifications`, `usernotificationpreferences`, `usertheme`, `datasourcelastaccessed`, `onedrivelastaccessed`\n- **Admin-only**: `settings`\n- **Read-all, write-admin**: `theme`, `translation`, `sharepoint-entitlements`\n- **Server-only** (no API access): `teamsconversationreferences`, `humaninput`\n",
+        "description": "Sets the specified item as the default (removes default flag from all others).\n\n**Container access tiers:**\n- **Blocked** (use dedicated routers): `flows`, `chat`, `pages`, `dataconnections`, `prompts`, `aisearchendpoints`, `aimodelendpoints`, `mcpservers`, `aitoolproviders`\n- **Blocked** (use /user/* endpoints): `chatlog`, `feedback`, `usersettings`, `userfavorites`, `usernotifications`, `usernotificationpreferences`, `usertheme`, `datasourcelastaccessed`, `onedrivelastaccessed`\n- **Admin-only**: `settings`\n- **Read-all, write-admin**: `theme`, `translation`\n- **Server-only** (no API access): `teamsconversationreferences`, `humaninput`\n",
         "parameters": [
           {
             "in": "path",
@@ -18428,7 +18477,7 @@
           "Cosmos"
         ],
         "summary": "Create a new item",
-        "description": "Creates a new item with auto-generated ID if not provided.\n\n**Container access tiers (enforced by middleware):**\n- **Blocked** (403 — use dedicated routers): `flows`, `chat`, `pages`, `dataconnections`, `prompts`, `aisearchendpoints`, `aimodelendpoints`, `mcpservers`, `aitoolproviders`\n- **Blocked** (403 — use /user/* endpoints): `chatlog`, `feedback`, `usersettings`, `userfavorites`, `usernotifications`, `usernotificationpreferences`, `usertheme`, `datasourcelastaccessed`, `onedrivelastaccessed`\n- **Admin-only** (403 for non-admins): `settings`\n- **Read-all, write-admin**: `theme`, `translation`, `sharepoint-entitlements`\n- **Server-only** (no API access): `teamsconversationreferences`, `humaninput`\n- **General**: all other containers (any authenticated user)\n",
+        "description": "Creates a new item with auto-generated ID if not provided.\n\n**Container access tiers (enforced by middleware):**\n- **Blocked** (403 — use dedicated routers): `flows`, `chat`, `pages`, `dataconnections`, `prompts`, `aisearchendpoints`, `aimodelendpoints`, `mcpservers`, `aitoolproviders`\n- **Blocked** (403 — use /user/* endpoints): `chatlog`, `feedback`, `usersettings`, `userfavorites`, `usernotifications`, `usernotificationpreferences`, `usertheme`, `datasourcelastaccessed`, `onedrivelastaccessed`\n- **Admin-only** (403 for non-admins): `settings`\n- **Read-all, write-admin**: `theme`, `translation`\n- **Server-only** (no API access): `teamsconversationreferences`, `humaninput`\n- **General**: all other containers (any authenticated user)\n",
         "parameters": [
           {
             "in": "path",
@@ -19761,10 +19810,23 @@
               "schema": {
                 "type": "object",
                 "required": [
-                  "text"
+                  "content"
                 ],
                 "properties": {
-                  "text": {
+                  "content": {
+                    "type": "string",
+                    "description": "Updated memory text (alias `text` also accepted)"
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "USER_GLOBAL",
+                      "USER_CHAT",
+                      "ORG_GLOBAL",
+                      "ORG_CHAT"
+                    ]
+                  },
+                  "chatId": {
                     "type": "string"
                   },
                   "metadata": {
@@ -19780,7 +19842,10 @@
             "description": "Memory updated"
           },
           "400": {
-            "description": "Missing text"
+            "description": "Missing content"
+          },
+          "403": {
+            "description": "Insufficient permissions for scope"
           }
         }
       },
