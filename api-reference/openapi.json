@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Findable API",
-    "version": "3.2.46",
+    "version": "3.2.53",
     "description": "REST API for the Findable AI Assistant platform.\n\n## Authentication\n\nAll endpoints (except `/server/setup` and `/server/bootstrap`) require a valid **Azure AD / Entra ID Bearer token**.\n\n### Obtaining a token\n\n1. Register (or reuse) an **App Registration** in Azure Entra ID for your client.\n2. Under **API Permissions**, add a delegated permission for the Findable server app:\n   `api://<SERVER_CLIENT_ID>/User.Read`\n3. Acquire a token using MSAL (or any OAuth 2.0 library) with the following parameters:\n\n| Parameter | Value |\n|-----------|-------|\n| Authority | `https://login.microsoftonline.com/<TENANT_ID>` |\n| Client ID | Your client app registration ID |\n| Scope | `api://<SERVER_CLIENT_ID>/User.Read` |\n| Grant type | Authorization Code (interactive) or Client Credentials (daemon) |\n\n### Example (MSAL Node.js)\n\n```javascript\nconst { ConfidentialClientApplication } = require(\"@azure/msal-node\");\n\nconst cca = new ConfidentialClientApplication({\n  auth: {\n    clientId: \"<YOUR_CLIENT_ID>\",\n    authority: \"https://login.microsoftonline.com/<TENANT_ID>\",\n    clientSecret: \"<YOUR_CLIENT_SECRET>\",\n  },\n});\n\nconst result = await cca.acquireTokenByClientCredential({\n  scopes: [\"api://<SERVER_CLIENT_ID>/.default\"],\n});\n\n// Use result.accessToken in the Authorization header\n```\n\n### Using the token\n\nInclude the token in every request:\n```\nAuthorization: Bearer <access_token>\n```\n\n### Roles\n\nAccess is determined by Azure AD group membership configured in the application settings:\n- **Admin (Owner)**: Full access to all endpoints including admin operations\n- **Contributor**: Can create and manage chats, files, and content\n- **User**: Read access to entitled chats and resources\n",
     "contact": {
       "name": "Findable Support"
@@ -1409,7 +1409,8 @@
                     "prompt_response",
                     "inline_buttons",
                     "message_notification",
-                    "sources_unavailable"
+                    "sources_unavailable",
+                    "context_cleared"
                   ]
                 },
                 "humanInputData": {
@@ -1628,7 +1629,8 @@
               "prompt_response",
               "inline_buttons",
               "message_notification",
-              "sources_unavailable"
+              "sources_unavailable",
+              "context_cleared"
             ]
           },
           "humanInputData": {
@@ -1856,7 +1858,8 @@
                           "prompt_response",
                           "inline_buttons",
                           "message_notification",
-                          "sources_unavailable"
+                          "sources_unavailable",
+                          "context_cleared"
                         ]
                       },
                       "humanInputData": {
@@ -2579,6 +2582,14 @@
           },
           "vectorFieldName": {
             "type": "string"
+          },
+          "chunkSize": {
+            "description": "Chunk size in characters (SplitSkill maximumPageLength) for newly created skillsets. Default 2000.",
+            "type": "integer"
+          },
+          "chunkOverlap": {
+            "description": "Chunk overlap in characters (SplitSkill pageOverlapLength), capped at 50% of chunkSize. Default 500.",
+            "type": "integer"
           }
         },
         "required": [
@@ -4439,38 +4450,20 @@
       "FlowGroup": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "parentId": {
-            "description": "FK to parent group for nesting",
-            "type": "string"
-          },
-          "icon": {
-            "description": "Material icon name",
-            "type": "string"
-          },
-          "origin": {
-            "type": "string",
-            "enum": [
-              "builtIn",
-              "admin"
-            ]
-          },
           "scope": {
+            "description": "Access control model",
             "type": "string",
             "enum": [
               "personal",
               "shared"
             ]
           },
+          "createdBy": {
+            "description": "UPN of the creator",
+            "type": "string"
+          },
           "isPublic": {
+            "description": "Allow public read access",
             "type": "boolean"
           },
           "owners": {
@@ -4669,21 +4662,48 @@
               }
             ]
           },
-          "sort": {
-            "type": "integer",
-            "description": "Ordering within parent"
+          "hideFromCatalog": {
+            "description": "Hide entity from user-facing recommendations and catalog/search surfaces (still accessible to owners/contributors/admins)",
+            "type": "boolean"
           },
           "createdAt": {
-            "type": "string"
-          },
-          "createdBy": {
-            "type": "string"
-          },
-          "updatedAt": {
+            "description": "ISO-8601 creation timestamp",
             "type": "string"
           },
           "updatedBy": {
             "type": "string"
+          },
+          "updatedAt": {
+            "description": "ISO-8601 update timestamp",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "parentId": {
+            "description": "FK to parent group for nesting",
+            "type": "string"
+          },
+          "icon": {
+            "description": "Material icon name",
+            "type": "string"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "builtIn",
+              "admin"
+            ]
+          },
+          "sort": {
+            "type": "integer",
+            "description": "Ordering within parent"
           }
         },
         "required": [
@@ -5366,72 +5386,20 @@
       "DataConnection": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "string"
-          },
-          "name": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "type": {
-            "description": "DataPlatformType — database or vector store engine",
-            "type": "string",
-            "enum": [
-              "mssql",
-              "postgres",
-              "mysql",
-              "mariadb",
-              "oracle",
-              "db2",
-              "sqlite",
-              "supabase",
-              "hana",
-              "duckdb",
-              "databricks",
-              "snowflake",
-              "redshift",
-              "synapse",
-              "fabric-warehouse",
-              "fabric-lakehouse",
-              "athena",
-              "bigquery",
-              "clickhouse",
-              "trino",
-              "adx",
-              "cosmosdb",
-              "mongodb",
-              "dynamodb",
-              "cassandra",
-              "couchdb",
-              "firebase",
-              "pinecone",
-              "weaviate",
-              "qdrant",
-              "chroma",
-              "elasticsearch",
-              "opensearch",
-              "pgvector",
-              "redis",
-              "milvus",
-              "mongodb_atlas",
-              "vertex_ai_search",
-              "aws_kendra",
-              "oracle_vector",
-              "vespa",
-              "lancedb",
-              "marqo"
-            ]
-          },
           "scope": {
             "type": "string",
             "enum": [
               "personal",
               "shared"
-            ]
+            ],
+            "description": "Access control model"
+          },
+          "createdBy": {
+            "description": "UPN of the creator",
+            "type": "string"
           },
           "isPublic": {
+            "description": "Allow public read access",
             "type": "boolean"
           },
           "owners": {
@@ -5630,6 +5598,79 @@
               }
             ]
           },
+          "hideFromCatalog": {
+            "description": "Hide entity from user-facing recommendations and catalog/search surfaces (still accessible to owners/contributors/admins)",
+            "type": "boolean"
+          },
+          "createdAt": {
+            "description": "ISO-8601 creation timestamp",
+            "type": "string"
+          },
+          "updatedBy": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "description": "ISO-8601 update timestamp",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "type": {
+            "description": "DataPlatformType — database or vector store engine",
+            "type": "string",
+            "enum": [
+              "mssql",
+              "postgres",
+              "mysql",
+              "mariadb",
+              "oracle",
+              "db2",
+              "sqlite",
+              "supabase",
+              "hana",
+              "duckdb",
+              "databricks",
+              "snowflake",
+              "redshift",
+              "synapse",
+              "fabric-warehouse",
+              "fabric-lakehouse",
+              "athena",
+              "bigquery",
+              "clickhouse",
+              "trino",
+              "adx",
+              "cosmosdb",
+              "mongodb",
+              "dynamodb",
+              "cassandra",
+              "couchdb",
+              "firebase",
+              "pinecone",
+              "weaviate",
+              "qdrant",
+              "chroma",
+              "elasticsearch",
+              "opensearch",
+              "pgvector",
+              "redis",
+              "milvus",
+              "mongodb_atlas",
+              "vertex_ai_search",
+              "aws_kendra",
+              "oracle_vector",
+              "vespa",
+              "lancedb",
+              "marqo"
+            ]
+          },
           "endpoint": {
             "description": "Hostname, URL, or workspace URL",
             "type": "string"
@@ -5749,15 +5790,6 @@
           "isEnabled": {
             "type": "boolean"
           },
-          "createdBy": {
-            "type": "string"
-          },
-          "createdAt": {
-            "type": "string"
-          },
-          "updatedAt": {
-            "type": "string"
-          },
           "tags": {
             "type": "array",
             "items": {
@@ -5766,6 +5798,7 @@
           }
         },
         "required": [
+          "scope",
           "id"
         ],
         "additionalProperties": false,
@@ -6855,6 +6888,222 @@
       "PromptTemplate": {
         "type": "object",
         "properties": {
+          "scope": {
+            "default": "shared",
+            "type": "string",
+            "enum": [
+              "personal",
+              "shared"
+            ]
+          },
+          "isPublic": {
+            "default": false,
+            "type": "boolean"
+          },
+          "hideFromCatalog": {
+            "default": false,
+            "type": "boolean"
+          },
+          "owners": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "group",
+                    "user"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "mail": {
+                  "type": "string"
+                },
+                "securityEnabled": {
+                  "type": "boolean"
+                },
+                "mailEnabled": {
+                  "type": "boolean"
+                },
+                "groupTypes": {
+                  "nullable": true,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "groupType": {
+                  "type": "string"
+                },
+                "userPrincipalName": {
+                  "type": "string"
+                },
+                "jobTitle": {
+                  "type": "string"
+                },
+                "department": {
+                  "type": "string"
+                },
+                "officeLocation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "type"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "contributors": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "group",
+                    "user"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "mail": {
+                  "type": "string"
+                },
+                "securityEnabled": {
+                  "type": "boolean"
+                },
+                "mailEnabled": {
+                  "type": "boolean"
+                },
+                "groupTypes": {
+                  "nullable": true,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "groupType": {
+                  "type": "string"
+                },
+                "userPrincipalName": {
+                  "type": "string"
+                },
+                "jobTitle": {
+                  "type": "string"
+                },
+                "department": {
+                  "type": "string"
+                },
+                "officeLocation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "type"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "users": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "group",
+                    "user"
+                  ]
+                },
+                "displayName": {
+                  "type": "string"
+                },
+                "mail": {
+                  "type": "string"
+                },
+                "securityEnabled": {
+                  "type": "boolean"
+                },
+                "mailEnabled": {
+                  "type": "boolean"
+                },
+                "groupTypes": {
+                  "nullable": true,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "groupType": {
+                  "type": "string"
+                },
+                "userPrincipalName": {
+                  "type": "string"
+                },
+                "jobTitle": {
+                  "type": "string"
+                },
+                "department": {
+                  "type": "string"
+                },
+                "officeLocation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "type"
+              ],
+              "additionalProperties": {}
+            }
+          },
+          "inheritEntitlements": {
+            "default": true,
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "owners": {
+                    "type": "boolean"
+                  },
+                  "contributors": {
+                    "type": "boolean"
+                  },
+                  "users": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
           "id": {
             "type": "string",
             "minLength": 1
@@ -7152,222 +7401,6 @@
               "type": "string"
             }
           },
-          "scope": {
-            "default": "shared",
-            "type": "string",
-            "enum": [
-              "personal",
-              "shared"
-            ]
-          },
-          "isPublic": {
-            "default": false,
-            "type": "boolean"
-          },
-          "hideFromCatalog": {
-            "default": false,
-            "type": "boolean"
-          },
-          "owners": {
-            "default": [],
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "type": {
-                  "type": "string",
-                  "enum": [
-                    "group",
-                    "user"
-                  ]
-                },
-                "displayName": {
-                  "type": "string"
-                },
-                "mail": {
-                  "type": "string"
-                },
-                "securityEnabled": {
-                  "type": "boolean"
-                },
-                "mailEnabled": {
-                  "type": "boolean"
-                },
-                "groupTypes": {
-                  "nullable": true,
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "groupType": {
-                  "type": "string"
-                },
-                "userPrincipalName": {
-                  "type": "string"
-                },
-                "jobTitle": {
-                  "type": "string"
-                },
-                "department": {
-                  "type": "string"
-                },
-                "officeLocation": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id",
-                "type"
-              ],
-              "additionalProperties": {}
-            }
-          },
-          "contributors": {
-            "default": [],
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "type": {
-                  "type": "string",
-                  "enum": [
-                    "group",
-                    "user"
-                  ]
-                },
-                "displayName": {
-                  "type": "string"
-                },
-                "mail": {
-                  "type": "string"
-                },
-                "securityEnabled": {
-                  "type": "boolean"
-                },
-                "mailEnabled": {
-                  "type": "boolean"
-                },
-                "groupTypes": {
-                  "nullable": true,
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "groupType": {
-                  "type": "string"
-                },
-                "userPrincipalName": {
-                  "type": "string"
-                },
-                "jobTitle": {
-                  "type": "string"
-                },
-                "department": {
-                  "type": "string"
-                },
-                "officeLocation": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id",
-                "type"
-              ],
-              "additionalProperties": {}
-            }
-          },
-          "users": {
-            "default": [],
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "id": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "type": {
-                  "type": "string",
-                  "enum": [
-                    "group",
-                    "user"
-                  ]
-                },
-                "displayName": {
-                  "type": "string"
-                },
-                "mail": {
-                  "type": "string"
-                },
-                "securityEnabled": {
-                  "type": "boolean"
-                },
-                "mailEnabled": {
-                  "type": "boolean"
-                },
-                "groupTypes": {
-                  "nullable": true,
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "groupType": {
-                  "type": "string"
-                },
-                "userPrincipalName": {
-                  "type": "string"
-                },
-                "jobTitle": {
-                  "type": "string"
-                },
-                "department": {
-                  "type": "string"
-                },
-                "officeLocation": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "id",
-                "type"
-              ],
-              "additionalProperties": {}
-            }
-          },
-          "inheritEntitlements": {
-            "default": true,
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "owners": {
-                    "type": "boolean"
-                  },
-                  "contributors": {
-                    "type": "boolean"
-                  },
-                  "users": {
-                    "type": "boolean"
-                  }
-                },
-                "additionalProperties": false
-              }
-            ]
-          },
           "parentId": {
             "type": "string"
           },
@@ -7389,11 +7422,6 @@
           }
         },
         "required": [
-          "id",
-          "title",
-          "content",
-          "variableSpecs",
-          "tags",
           "scope",
           "isPublic",
           "hideFromCatalog",
@@ -7401,6 +7429,11 @@
           "contributors",
           "users",
           "inheritEntitlements",
+          "id",
+          "title",
+          "content",
+          "variableSpecs",
+          "tags",
           "lifecycle"
         ],
         "additionalProperties": false
@@ -7408,18 +7441,6 @@
       "PromptGroup": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "string",
-            "minLength": 1
-          },
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200
-          },
-          "description": {
-            "type": "string"
-          },
           "scope": {
             "default": "shared",
             "type": "string",
@@ -7636,20 +7657,32 @@
               }
             ]
           },
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "description": {
+            "type": "string"
+          },
           "parentId": {
             "type": "string"
           }
         },
         "required": [
-          "id",
-          "title",
           "scope",
           "isPublic",
           "hideFromCatalog",
           "owners",
           "contributors",
           "users",
-          "inheritEntitlements"
+          "inheritEntitlements",
+          "id",
+          "title"
         ],
         "additionalProperties": false
       },
@@ -10250,7 +10283,7 @@
           "Tools"
         ],
         "summary": "Test a custom tool endpoint",
-        "description": "Reads tool config by ID from Cosmos and executes with provided input.",
+        "description": "Reads tool config by ID from Cosmos and executes with provided input. Requires management access to the config (owners/contributors; admins bypass) since execution uses the stored credentials.\n",
         "parameters": [
           {
             "in": "path",
@@ -10279,6 +10312,9 @@
         "responses": {
           "200": {
             "description": "Tool execution result"
+          },
+          "403": {
+            "description": "No management access to this config"
           },
           "404": {
             "description": "Tool provider config not found"
@@ -14128,37 +14164,6 @@
         }
       }
     },
-    "/onedrive/index": {
-      "post": {
-        "tags": [
-          "OneDrive"
-        ],
-        "summary": "Index a single OneDrive file",
-        "description": "Queues a file for indexing after direct upload via Graph API.",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "fileId": {
-                    "type": "string"
-                  },
-                  "fileName": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "File queued for indexing"
-          }
-        }
-      }
-    },
     "/onedrive/index-unindexed": {
       "post": {
         "tags": [
@@ -14213,62 +14218,6 @@
           },
           "404": {
             "description": "File not found"
-          }
-        }
-      }
-    },
-    "/onedrive/indexed": {
-      "get": {
-        "tags": [
-          "OneDrive"
-        ],
-        "summary": "Get indexed files for the authenticated user",
-        "description": "Returns file paths that have been indexed in the OneDrive search index.",
-        "responses": {
-          "200": {
-            "description": "List of indexed file paths"
-          }
-        }
-      }
-    },
-    "/onedrive/sync": {
-      "post": {
-        "tags": [
-          "OneDrive"
-        ],
-        "summary": "Sync OneDrive files with search index",
-        "description": "Indexes new files and removes stale index entries by comparing OneDrive with the search index.",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "files": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string"
-                        },
-                        "name": {
-                          "type": "string"
-                        },
-                        "isFolder": {
-                          "type": "boolean"
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Sync results (indexed count, removed count)"
           }
         }
       }
@@ -14827,6 +14776,20 @@
         "responses": {
           "200": {
             "description": "Discovered target count and indexer names"
+          }
+        }
+      }
+    },
+    "/jobs/orphaned-attachments-sweep": {
+      "post": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Trigger orphaned attachments sweep",
+        "description": "Deletes per-chat attachment folders (AttachedFiles/{chatId}) on the blob backend whose chatId has no chatlog and no persisted chat, along with their chunks in the user's personal search index. Age-gated by orphanedAttachmentsRetentionInHours.\n",
+        "responses": {
+          "200": {
+            "description": "Sweep results"
           }
         }
       }
@@ -15530,6 +15493,87 @@
           },
           "403": {
             "description": "Access denied"
+          }
+        }
+      }
+    },
+    "/flows/{id}/draft": {
+      "put": {
+        "tags": [
+          "Flows"
+        ],
+        "summary": "Save the flow's unpublished working copy (draft)",
+        "description": "Writes nodes/edges/executionConfig to `flow.draft` only — the live\npublished definition is untouched, so the edit is invisible to runtime\nuntil the flow is published. Supports optimistic concurrency via\n`expectedDraftRev` (409 on mismatch). Requires write permission.\n",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "nodes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "edges": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  },
+                  "executionConfig": {
+                    "type": "object"
+                  },
+                  "expectedDraftRev": {
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Draft saved"
+          },
+          "409": {
+            "description": "Draft changed elsewhere"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Flows"
+        ],
+        "summary": "Discard the unpublished draft",
+        "description": "Reverts to the live published definition. Requires write permission.",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Draft discarded"
           }
         }
       }
@@ -17887,276 +17931,19 @@
         }
       }
     },
-    "/azure/blob/{datasourcetype}/folders/datasource/{folderName}": {
+    "/azure/blob/files/{datasourcetype}/{filepath}": {
       "get": {
         "tags": [
           "Files"
         ],
-        "summary": "Get data source name for a folder",
-        "description": "Returns the Azure Search data source name derived from the folder name.",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "datasourcetype",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "PERSONAL",
-                "SHARED",
-                "SHAREPOINT",
-                "NONE"
-              ]
-            }
-          },
-          {
-            "in": "path",
-            "name": "folderName",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
+        "summary": "Legacy citation download (redirect shim — delete in 3.2.52)",
+        "description": "Pre-3.2.51 citation URLs. Mappable requests 302 onto their /files/{chatId}/{sourceId}/download reference; everything else is served by the legacy handler (UPN-scoped for personal paths, entitled-set-validated for shared paths).\n",
         "responses": {
           "200": {
-            "description": "Data source name"
-          }
-        }
-      }
-    },
-    "/azure/blob/{datasourcetype}/files/{filepath}": {
-      "get": {
-        "tags": [
-          "Files"
-        ],
-        "summary": "Download a file",
-        "description": "Downloads a file from Azure Blob Storage by its path.",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "datasourcetype",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "PERSONAL",
-                "SHARED",
-                "SHAREPOINT",
-                "NONE"
-              ]
-            }
+            "description": "File content (binary, unmappable legacy fallback)"
           },
-          {
-            "in": "path",
-            "name": "filepath",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "Full blob path of the file"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "File content (binary)",
-            "content": {
-              "application/octet-stream": {
-                "schema": {
-                  "type": "string",
-                  "format": "binary"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Access denied"
-          },
-          "404": {
-            "description": "File not found"
-          }
-        }
-      }
-    },
-    "/azure/blob/{datasourcetype}/folders/{folderName}/files": {
-      "get": {
-        "tags": [
-          "Files"
-        ],
-        "summary": "List files in a folder",
-        "description": "Returns all files in the specified blob storage folder.",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "datasourcetype",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "PERSONAL",
-                "SHARED",
-                "SHAREPOINT",
-                "NONE"
-              ]
-            }
-          },
-          {
-            "in": "path",
-            "name": "folderName",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "field",
-            "schema": {
-              "type": "string",
-              "default": "title"
-            },
-            "description": "Index field to match files against"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Array of file objects"
-          },
-          "403": {
-            "description": "Access denied"
-          }
-        }
-      }
-    },
-    "/azure/blob/{datasourcetype}/folders": {
-      "get": {
-        "tags": [
-          "Files"
-        ],
-        "summary": "List folders",
-        "description": "Returns all blob storage folders for the given data source type.",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "datasourcetype",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "PERSONAL",
-                "SHARED",
-                "SHAREPOINT",
-                "NONE"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Array of folder names"
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "Files"
-        ],
-        "summary": "Create a folder",
-        "description": "Creates a new blob storage folder (virtual directory).",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "datasourcetype",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "PERSONAL",
-                "SHARED",
-                "SHAREPOINT",
-                "NONE"
-              ]
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "folderName": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Folder created"
-          },
-          "403": {
-            "description": "Access denied"
-          }
-        }
-      }
-    },
-    "/azure/blob/{datasourcetype}/upload": {
-      "post": {
-        "tags": [
-          "Files"
-        ],
-        "summary": "Upload files",
-        "description": "Uploads one or more files to Azure Blob Storage.",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "datasourcetype",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "enum": [
-                "PERSONAL",
-                "SHARED",
-                "SHAREPOINT",
-                "NONE"
-              ]
-            }
-          },
-          {
-            "in": "query",
-            "name": "chatId",
-            "schema": {
-              "type": "string"
-            },
-            "description": "Chat ID for shared-file permission check"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "file": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "format": "binary"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Files uploaded successfully"
+          "302": {
+            "description": "Redirect to the /files download reference"
           },
           "403": {
             "description": "Access denied"
@@ -19763,6 +19550,20 @@
         }
       }
     },
+    "/user/memories/info": {
+      "get": {
+        "tags": [
+          "Memory"
+        ],
+        "summary": "Get memory provider information",
+        "description": "Returns information about the configured memory provider and its health status.",
+        "responses": {
+          "200": {
+            "description": "Provider info and health status"
+          }
+        }
+      }
+    },
     "/user/memories/{memoryId}": {
       "get": {
         "tags": [
@@ -20004,18 +19805,82 @@
         }
       }
     },
-    "/user/memories/info": {
+    "/files/{chatId}/{sourceId}": {
       "get": {
         "tags": [
-          "Memory"
+          "Files"
         ],
-        "summary": "Get memory provider information",
-        "description": "Returns information about the configured memory provider and its health status.",
-        "responses": {
-          "200": {
-            "description": "Provider info and health status"
-          }
-        }
+        "summary": "List files for a datasource reference",
+        "description": "Lists files within the source's server-resolved scope. Entries are scope-relative; full storage paths never leave the server. Optional `path` narrows to a subfolder.\n"
+      },
+      "delete": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Delete a file by scope-relative path (index doc removed via sync)"
+      }
+    },
+    "/files/{chatId}/{sourceId}/indexed": {
+      "get": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Scope-relative paths of files present in the source's search index"
+      }
+    },
+    "/files/{chatId}/{sourceId}/upload": {
+      "post": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Multipart upload into the source's resolved scope folder"
+      }
+    },
+    "/files/{chatId}/{sourceId}/upload-target": {
+      "get": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Resolve the delegated-upload folder for a OneDrive-backed source"
+      }
+    },
+    "/files/{chatId}/{sourceId}/sync": {
+      "post": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Ensure search resources exist and run the source's indexer"
+      }
+    },
+    "/files/{chatId}/{sourceId}/events": {
+      "get": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Indexer progress SSE stream keyed by datasource reference",
+        "description": "Delegates to the indexer SSE controller with the server-resolved index name; every event carries {chatId, sourceId} so the client never learns datasource names. OneDrive indexing is on-demand (no Azure indexer) — its progress is observed via the indexed endpoint.\n"
+      }
+    },
+    "/files/{chatId}/{sourceId}/download": {
+      "get": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Download a file by scope-relative path (citation target)"
+      }
+    },
+    "/files/{chatId}/{sourceId}/folders": {
+      "post": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Create a scope subfolder (body { path })"
+      },
+      "delete": {
+        "tags": [
+          "Files"
+        ],
+        "summary": "Delete a scope subfolder and its contents (manage permission)"
       }
     },
     "/assignments/inbox": {

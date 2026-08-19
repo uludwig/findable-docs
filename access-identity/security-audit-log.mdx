@@ -1,0 +1,103 @@
+---
+title: "Security Audit Log"
+description: "Who changed the configuration, when, and what exactly changed — settings edits, admin resource CRUD, permission changes, and infrastructure operations."
+---
+
+Chat logging answers *"what did people ask the AI?"*. The security audit log answers the auditor's question: **"who changed the configuration, when, and what exactly did they change?"**
+
+### One Level, Structured Fields
+
+Every audit event travels on a single Winston level, **`security`**, which sits at **priority 0 — above `error`** — deliberately, so that **no `LOG_LEVEL` configuration can ever filter the audit trail out**. The distinctions live in structured fields, not in extra log levels.
+
+Feature code never calls `logger.security()` directly. It calls **`auditEvent()`** (or the settings-specific helpers) in `src/utils/securityaudit.ts`, so every event carries the typed shape from `@findable/shared`.
+
+| Field | Meaning |
+|-------|---------|
+| `category` | Which capture tier emitted it — `settings`, `resource`, `acl`, `infrastructure` |
+| `action` | The verb — `created`, `updated`, `deleted`, `acl-changed`, `reparented`, `scope-migrated`, `default-changed`, `transferred`, `executed`, … |
+| `actor` | UPN of the acting user; `system:<component>` for background writers (seeders, jobs, setup); `unauthenticated` when no UPN is on the request |
+| `target` | `{ type, container?, id?, name? }` — what was acted on |
+| `severity` | `critical` \| `notable` \| `routine` |
+| `outcome` | `success` \| `denied` \| `error` |
+| `changedFields` | Names of the fields that changed — **always recorded**, even when value diffs are disabled |
+| `before` / `after` | Redacted previous/new values (omitted when diffs are disabled) |
+| `route` | HTTP route, for route-level (`infrastructure`) capture |
+
+### Capture Tiers
+
+| Category | What it covers | Where the hook lives |
+|----------|----------------|----------------------|
+| `settings` | The app-settings singleton document | `settingsauditmiddleware.ts` (router-level, on the generic `/azure/cosmos/settings/*` routes), plus `settingsservice.ts` and `setupservice.ts` |
+| `resource` | Admin resource tables — model endpoints, search endpoint configs, MCP servers, tool providers, datasources, data connections | `resourceScopedService.ts`, `datasourceservice.ts`, `dataconnectionservice.ts`, `toolservice.ts` |
+| `acl` | Repermissioning, reparenting, and scope migration of flows, chats, prompts, pages, and resources; assignment transfer and delegation | `aclUtils.ts` (`applyAclMerge`, `assertReparentAllowed`), `scopeMigrationService.ts`, `assignmentService.ts`, `assignmentDelegation.ts` |
+| `infrastructure` | Remote/mass operations with no before/after document — Azure Search service resources, bootstrap/seed, migrations | `audit.middleware.ts` (`auditInfrastructureRoutes`) — router-wide on the search and bootstrap routers, per-route on the admin migration endpoints |
+
+The settings and infrastructure tiers are deliberately **middleware** rather than per-handler hooks: the app-settings document has no service layer (twelve write shapes across the generic Cosmos handlers), and the search/bootstrap/migration controllers number in the dozens.
+
+**Diff-gating varies by tier.** Settings create/update and resource updates are diff-gated — a `PUT` that echoes the same values emits nothing. Settings `deleted` and resource `created`/`deleted` always emit. The `infrastructure` tier performs no diff at all: it emits one event per successful write request.
+
+### Severity Classification
+
+Severity is resolved from category, action, and changed fields (`resolveAuditSeverity`). The map is *data, not code* — adjust it as your sensitivity picture evolves.
+
+| Category | Default severity | Escalation |
+|----------|------------------|------------|
+| `settings` | `notable` | → **`critical`** when any changed field is in `CRITICAL_SETTINGS_FIELDS` |
+| `acl` | `notable` | — |
+| `resource` | `routine` | → `notable` for `created`, `deleted`, `default-changed`, `scope-migrated`, `transferred` |
+| `infrastructure` | `routine` | → `notable` for the same action set |
+
+`CRITICAL_SETTINGS_FIELDS` covers tenant identity and admin control (`tenantId`, `clientId`, `owners`), Microsoft Graph credentials and auth mode (`graphAuthType`, `graphClientId`, `graphClientSecret`), storage/Cosmos auth modes and credentials (`azureBlobAuthType`, `azureBlobEndpoint`, `azureBlobResourceId`, `azureBlobStorageConnectionString`, `azureCosmosAuthType`, `azureCosmosEndpoint`), core AI and search credentials (`azureAiEndpoint`, `azureAiKey`, `azureSearchEndpoint`, `azureSearchKey`), and entitlement enforcement (`enableAzureSearchAcl`).
+
+The guiding example: rotating a Tavily search key is `routine`; changing the Microsoft Graph secret or flipping a managed-identity auth mode is `critical`.
+
+### Sinks
+
+| Sink | When |
+|------|------|
+| Console | **Always** |
+| Rotating files | Unless `AZURE_ENABLE_FILE_LOGGING=false` |
+| Azure Monitor / Log Analytics | When the [Azure Monitor Logging](/operations/azure-monitor-logging) transport is configured |
+| Cosmos `auditlog` container | When `securityAuditCosmosEnabled` is on (default) — this is the **queryable** copy |
+
+The Cosmos sink (`SecurityAuditCosmosTransport`) follows the same principle as the Azure Monitor transport — **logging must never block or break the app**:
+
+- `log()` ignores every record whose level is not `security`, pushes a normalized doc onto an in-memory buffer, and calls the Winston callback **synchronously**. It never awaits the network.
+- Writes flush out-of-band — batches of **25**, or every **3 seconds**, whichever comes first.
+- The buffer is bounded at **5,000** docs; oldest entries are dropped beyond the cap.
+- Cosmos failures are swallowed to `console.error` (never back into `logger`, which would recurse) and the affected docs are dropped. **Dropped docs still exist in the console/file/Azure Monitor stream** — Cosmos is the queryable copy, not the only one.
+- Each document is stamped with a per-item Cosmos `ttl` from the configured retention, so the container self-prunes. Setting `securityAuditRetentionDays` to `0` stamps no TTL.
+
+The `auditlog` container is **server-only**: written exclusively by the transport, and not reachable through the generic `/azure/cosmos/:container` routes by any user, admin included. There is no application write path that can amend or delete an event.
+
+### Settings
+
+Configured on **Admin → Azure Monitor Logging** (`#/admin/logging`), alongside the log-shipping dials.
+
+| Setting | Env Var | Default | Description |
+|---------|---------|---------|-------------|
+| `securityAuditCosmosEnabled` | `SECURITY_AUDIT_COSMOS_ENABLED` | `true` | Persist events to the Cosmos `auditlog` container. Kill switch only — events still reach the console/file/Azure Monitor stream when off. |
+| `securityAuditRetentionDays` | `SECURITY_AUDIT_RETENTION_DAYS` | `90` | Retention for persisted events; becomes the per-item Cosmos TTL. |
+| `securityAuditIncludeDiffs` | `SECURITY_AUDIT_INCLUDE_DIFFS` | `true` | Include redacted before/after values. When off, events carry **changed-field names only**. |
+
+Secrets are redacted by the logger wrapper before any transport sees the metadata. Oversized diffs are capped per side and collapse to a field-name list rather than writing a runaway payload.
+
+### Known Caveat — `acl-changed` and `reparented` Are Emitted Before Persistence
+
+<Warning>
+Two hooks write their audit event at permission-resolution time, **before** the Cosmos write that applies the change has completed: `applyAclMerge` (emitting `acl-changed`) and `assertReparentAllowed` (emitting `reparented`), both in `src/utils/aclUtils.ts`. The caller persists immediately afterward.
+
+**If that subsequent write fails, the audit log contains an event for a change that was never applied — a false positive.** For these two actions the trail can over-report, but it will not under-report.
+</Warning>
+
+This is a deliberate trade-off: one hook at each merge/gate choke point covers every entity type (flows, chats, prompts, pages, datasources, connections, resource-scoped types) instead of instrumenting every call site with post-write emission. When reconciling an incident, **confirm an `acl-changed` or `reparented` event against the current state of the target document** rather than treating the log line alone as proof the change landed.
+
+Everything else emits after persistence:
+
+| Emission point | Hooks |
+|----------------|-------|
+| **Before** the write (caveat applies) | `applyAclMerge` → `acl-changed`; `assertReparentAllowed` → `reparented` |
+| After the write | `scopeMigrationService` → `scope-migrated`; `assignmentService` / `assignmentDelegation` → `transferred`; all resource-tier hooks; the settings service and setup service hooks |
+| After the response commits | The `settings` and `infrastructure` middleware — both bail out when `res.statusCode >= 400`, so denied and failed writes emit nothing |
+
+Note that the middleware gate is "status under 400", not strictly 2xx/3xx.

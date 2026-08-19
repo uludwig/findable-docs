@@ -1,0 +1,24 @@
+---
+title: "Conversation Checkpoints (New Topic)"
+description: "Clear the canvas and the model's context without losing files, settings, or history."
+---
+
+**New Topic** clears the visible conversation and the model's context *without* discarding anything. It is the answer to "I want to change subject, but I don't want to re-upload my files or reconfigure this chat."
+
+A checkpoint is a synthetic system-role history item carrying `messageType: CONTEXT_CLEARED` (`CHAT_MESSAGE_TYPE.CONTEXT_CLEARED`). Inserting one:
+
+- **Clears the canvas and the LLM context** — only messages *after* the last marker are sent to the model. Helpers in `shared/src/utils/chatCheckpointUtils.ts` (`lastCheckpointIndex`, `historySinceLastCheckpoint`) slice history identically on the client trim, the canvas renderer, and any server consumer, so the view and the prompt never disagree.
+- **Keeps everything else** — the `chatId` (and therefore `AttachedFiles/{chatId}` uploads), `chatLogId`, data sources, web-search config, model selection, and `aiOptions` are all untouched.
+- **Loses no history** — earlier messages remain in Redux and in the `chatlog` container, and the canvas renders them as a collapsible *earlier conversation* segment the user can expand at any time.
+
+### Workspace Re-entry Preference
+
+Re-clicking the Personal Workspace entry (or **New Session…**) while already viewing the workspace conversation is governed by `workspaceNewSessionPreference`:
+
+| Value | Behavior |
+|-------|----------|
+| `'ask'` *(default)* | Show the New Session dialog and let the user choose |
+| `'fresh'` | Always mint a brand-new workspace session — new files area, settings reset to admin defaults |
+| `'checkpoint'` | Always start a new topic in place — keeps uploaded files and settings, clears the visible conversation |
+
+The dialog's **Remember my choice** checkbox writes this preference; users can change it later in **User Settings**.

@@ -5,7 +5,7 @@ description: "Runtime, services, and tooling required to run Findable plus the p
 
 Findable is an enterprise-grade AI assistant platform designed to make AI accessible to corporate users. Built with a [React](https://react.dev/) frontend and [Node.js](https://nodejs.org/) backend, it's optimized for [Azure](https://portal.azure.com/) deployment with [Microsoft Entra ID](https://entra.microsoft.com/) authentication.
 
-**Version:** 3.2.46 | **Node.js:** ≥24 | **License:** Private
+**Version:** 3.2.53 | **Node.js:** ≥24 | **License:** Private
 
 ### Key Features
 
@@ -24,6 +24,7 @@ Findable is an enterprise-grade AI assistant platform designed to make AI access
 - **Role-Based Access Control** - Owners, contributors, and users with ACL inheritance at app, page, and entity levels
 - **Personal & Shared Workspaces** - Private chats alongside collaborative shared chats with fine-grained permissions
 - **Audit Logging** - Comprehensive chat logging, feedback tracking, and user activity monitoring
+- **Security Audit Trail** - Every settings edit, admin resource change, permission change, and infrastructure operation captured with actor, target, changed fields, and severity — on an unfilterable `security` log level, persisted to a TTL-pruned Cosmos container
 - **Data Isolation** - Scoped data with Cosmos DB partitioning and per-user storage containers
 - **Embedded Agent Mode** - Embed any chat as a standalone agent widget via iframe in external apps or portals
 
@@ -52,6 +53,7 @@ Findable is an enterprise-grade AI assistant platform designed to make AI access
 - **Rich Content Rendering** - Markdown, code syntax highlighting, LaTeX math (KaTeX), Mermaid diagrams, Recharts visualizations — with SVG/PNG export buttons and live SVG code-fence previews
 - **AI-Generated Files** - Agents save CSV/JSON/Markdown/HTML/SVG files, Word documents (template fill or freeform markdown), Excel workbooks, and generated images to the user's personal storage with downloadable file chips
 - **File Upload** - Azure Blob storage with automatic document indexing
+- **Conversation Checkpoints** - "New Topic" clears the canvas and the model's context while keeping uploaded files, settings, and full history — earlier messages stay one click away in a collapsible segment
 - **Favorites & Navigation** - Customizable pages and sections with drag-and-drop ordering
 - **Feedback System** - Thumbs up/down with detailed feedback forms and admin review
 

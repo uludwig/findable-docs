@@ -64,6 +64,8 @@ Settings changes are picked up automatically on the settings auto-refresh cycle 
 
 **Managed identity only** (`DefaultAzureCredential`, scope `https://monitor.azure.com/.default`). The app's identity must have the **Monitoring Metrics Publisher** role on the Data Collection Rule / Data Collection Endpoint. API keys are not supported.
 
+**Local development:** the transport refuses to attach when there is no managed-identity endpoint to authenticate against — specifically when `NODE_ENV !== 'production'` and none of `WEBSITE_SITE_NAME`, `IDENTITY_ENDPOINT`, or `MSI_ENDPOINT` are present. A developer running with production settings pulled down from Cosmos gets a single `[Logger] Azure Log Analytics blocked on localhost` line instead of a credential-acquisition failure on every log write.
+
 ### Custom Table Schema
 
 Each log record is shipped as a row with these columns (declare a matching custom table + stream on the DCR):
