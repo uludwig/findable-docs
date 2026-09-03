@@ -5,17 +5,18 @@ description: "Runtime, services, and tooling required to run Findable plus the p
 
 Findable is an enterprise-grade AI assistant platform designed to make AI accessible to corporate users. Built with a [React](https://react.dev/) frontend and [Node.js](https://nodejs.org/) backend, it's optimized for [Azure](https://portal.azure.com/) deployment with [Microsoft Entra ID](https://entra.microsoft.com/) authentication.
 
-**Version:** 3.2.53 | **Node.js:** ≥24 | **License:** Private
+**Version:** 3.2.56 | **Node.js:** ≥24 | **License:** Private
 
 ### Key Features
 
 #### AI & LLM Support
-- **Multi-Provider LLM Support** - Azure AI, OpenAI, Anthropic, Google Gemini, xAI (Grok), DeepSeek, Perplexity, Mistral, Cohere, Groq, AWS Bedrock, Ollama, Fireworks AI, Together AI, DeepInfra
+- **Multi-Provider LLM Support** - Azure AI Foundry (incl. Azure OpenAI), OpenAI, Anthropic, Google Gemini, xAI (Grok), DeepSeek, Perplexity, Mistral, Cohere, Groq, AWS Bedrock, Ollama, Fireworks AI, Together AI, DeepInfra
 - **LangChain Integration** - Advanced orchestration with visual flow designer
 - **Model Context Protocol (MCP)** - Extensible tool integration framework
 - **Streaming Responses** - Real-time SSE streaming for all providers
 - **Memory System** - Persistent conversation memory with Mem0 integration
-- **Image Generation** - Dedicated image model endpoints (Azure AI / OpenAI `gpt-image-1`, xAI `grok-2-image`, Gemini image models) power the `generate_image` chat tool
+- **Image Generation** - Dedicated image model endpoints (Azure AI Foundry / OpenAI `gpt-image-2`, xAI `grok-imagine-image` family, Gemini image models) power the `generate_image` chat tool
+- **Per-User AI Quotas** - Weighted token budgets across daily / weekly / monthly windows, quota profiles by AD group, one-off grants, and a Usage Analytics admin view (experimental)
 
 #### Enterprise Platform
 - **AI-Powered Intranet** - Organize managed and personal AI chats into navigable pages and sections, creating a structured knowledge hub for your organization

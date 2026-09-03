@@ -11,8 +11,8 @@ OneDrive can be used as the **storage backend for personal and workspace files**
 
 | Aspect | Default (Azure Files) | OneDrive backend |
 |--------|----------------------|------------------|
-| Where workspace files live | Azure Blob `Private/` per user | User's OneDrive at `{oneDriveFolderName}/Workspace/` |
-| Where personal-files-in-shared-chat live | Azure Blob `Private/` per user | User's OneDrive at `{oneDriveFolderName}/AttachedFiles/{chatId}/` |
+| Where workspace files live | Azure Blob `data/Personal/{upn}/AttachedFiles/{chatId}/` | User's OneDrive at `{oneDriveFolderName}/AttachedFiles/{chatId}/` |
+| Where personal-files-in-shared-chat live | Azure Blob `data/Personal/{upn}/AttachedFiles/{chatId}/` | User's OneDrive at `{oneDriveFolderName}/AttachedFiles/{chatId}/` |
 | Search index | One per user (auto-provisioned) | One shared index (`oneDriveSharedIndexName`, default `personal-onedrive-shared`) with `UserIds` ACL filter |
 | Document text extraction | Azure Search skillsets | Server-side via Azure Document Intelligence + chunking + embeddings |
 | Indexing trigger | Indexer schedule | On-demand on every upload (immediate) |
@@ -66,6 +66,12 @@ For drag-and-drop uploads that go straight from the browser to OneDrive (bypassi
    ```
 3. In **Admin → Health** ([`#/admin/about`]), confirm the Graph `Files.ReadWrite.All` scope is healthy.
 4. Run a workspace query — the document should be retrievable. Repeat as a different user and confirm the second user **cannot** see the first user's content (ACL trim via `UserIds`).
+5. Confirm the file shows the green **Indexed** check in the workspace file list. An info icon reading *"Index status unavailable in this environment"* means the elevated-read role assignment (**Search Index Data Contributor** on the search service — see [Azure RBAC & Managed Identity](/operations/azure-rbac-managed-identity)) is missing for this deployment's identity.
+6. Check the **Search Elevated Read** badge on **Admin → Personal Workspace** (also on **Admin → Health**). It runs a live elevated-read probe as the server's managed identity and, on a 401 / 403, **fingerprints the service's API Access control mode** with a credential-less request: an "API keys"-only service answers a bare 403, while a service that allows roles answers 401 with a Bearer challenge. The badge therefore names the actual failure — API Access control left on **API keys** only, versus a missing role assignment, versus a missing managed identity — instead of an undifferentiated 403.
+
+<Note>
+`documentIntelligenceApiVersion` is a **database-only emergency override** and is not exposed on this admin page. When nonempty it overrides both the software's pinned Document Intelligence GA version (`2024-11-30`) and `DOCUMENT_INTELLIGENCE_API_VERSION`, so a stale database value survives software upgrades and environment-variable changes. Leave the key **absent** unless an emergency override is required — an empty string stored in the database also suppresses `DOCUMENT_INTELLIGENCE_API_VERSION` and falls straight to the pinned default. Remove the key after updating the software default.
+</Note>
 
 ### How indexing & ACL work
 

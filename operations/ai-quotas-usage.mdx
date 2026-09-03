@@ -1,0 +1,83 @@
+---
+title: "Per-User AI Quotas & Usage Analytics"
+description: "Meter every user-initiated AI call, optionally cap per-user consumption with weighted budgets and quota profiles, and surface usage to users and admins."
+---
+
+Findable meters every user-initiated AI call, optionally caps per-user consumption, and surfaces usage to users and admins.
+
+<Note>
+**Experimental.** The whole feature is hidden until the activation dial (**Admin → Advanced → Quota Activation**) leaves `off`.
+</Note>
+
+### How Metering Works
+
+- **Unit** — provider-reported tokens (input + output), captured per model response. Only embeddings are estimated (chars ÷ 4 — embedding APIs return no usage).
+- **Weighted budget, not per-model caps** — each model endpoint has a `quotaWeight` (default 1). Usage counts as `tokens × weight` against a single cumulative per-user budget. `quotaWeight: 0` = unmetered **and** exempt from blocking (raw tokens still recorded for visibility) — this is how you meter one expensive model while leaving the rest unbounded.
+- **Windows** — daily / weekly / monthly billing cycle, any combination. Boundaries are configuration, not storage: `quotaTimezone` (daily resets at *local* midnight), `quotaWeekStartDay` (Sunday vs Monday), `quotaMonthAnchorDay` (1–28, e.g. a 15th-to-15th cycle). Changing them re-interprets boundaries without any data migration.
+- **Storage** — `aitokenusage` container (server-only, partitioned by **Entra OID** so UPN reassignment can't merge or orphan history), one doc per user per calendar month holding **daily buckets only** — every window is computed as a sum. Raw per-model tallies (`byModel`) are stored alongside the weighted rollup.
+
+### Metered Scope
+
+**Metered:** chat; flows (run / resume / replay) including auxiliary flow LLM work — retriever query refinement, dynamic-form / AI-button / AI-option generation, and NL→SQL tool calls; scoped chat; `/azure/ai/generate`; flow generation; prompt AI-defaults; user-clicked recommendation refresh; OneDrive personal-workspace embedding indexing.
+
+Auxiliary calls degrade gracefully on a denial where sensible: query refinement and AI buttons/options fall back; dynamic-form generation and NL→SQL fail with the denial message.
+
+**Unmetered by design:** background jobs (title generation, scheduled recommendation runs), mem0 internals (including flow memory nodes), model probing, admin test endpoints, AzureFiles / Azure Search skillset vectorization, anonymous public flow runs, RAG query embeddings (a few tokens per retrieval), image generation (billed per image — no token semantics; runs only inside an already-admitted turn), and web-search providers that answer with their own LLM (e.g. Perplexity — not a configured model endpoint, so it has no weight or prices).
+
+### Who Gets Which Limits
+
+| Layer | How it works |
+|-------|--------------|
+| **Tenant defaults** | `userDailyTokenLimit` / `userWeeklyTokenLimit` / `userMonthlyTokenLimit` (weighted tokens; 0 or unset = unlimited) |
+| **Quota profiles** | Named limit sets assigned to **AD groups and/or users** via the same principal picker as sharing. Per window, the **most permissive matching value wins**; a window a profile leaves **unset inherits the tenant default** (unset ≠ unlimited); an explicit **0 means unlimited** and wins. Membership *is* assignment — no enrollment step. Group moves take effect within ~5 min (auth cache) or on next sign-in. |
+| **One-off grants** | **Admin → Usage Limits → Grant Extra Quota** (people picker with a live usage preview). Adds weighted tokens to one user's **current billing-cycle ceiling only** — daily/weekly limits are untouched — and expires with the cycle. Grants are audit-logged. |
+
+### Enforcement
+
+`quotaMode` progresses `off` (nothing recorded) → `track` (record only — **the recommended rollout mode**: gather real data before setting limits) → `enforce`. Under `enforce`, `quotaEnforcementStrictness` picks the in-flight behavior:
+
+| Strictness | Behavior |
+|---|---|
+| `permissive` | Check at turn start only; an in-flight chat turn always finishes. Flows are the exception: every flow **LLM node** is pre-checked regardless of strictness — a flow has no single turn-start check, so the per-node check *is* its admission check. |
+| `boundary` *(default)* | Also re-check between agentic tool-loop iterations — a runaway turn stops at the next step, answer-so-far stands. |
+| `strict` | Also abort chat generation mid-stream when a live chars ÷ 4 estimate exhausts the remaining budget (partial content is delivered, then the denial). Enforce-mode only by construction; scoped chat is not covered (its turns bound at the pre-check). |
+
+**Denials are hard-blocked before the model call:**
+
+- Chat receives an SSE `ai_quota_exceeded` error frame with the reset time.
+- Flow-node denials surface as a flow-error frame carrying `code: AI_QUOTA_EXCEEDED` with the same denial copy. **Continue** after the window resets re-runs the denied node from its checkpoint.
+- JSON routes return a structured `429` — `code: AI_QUOTA_EXCEEDED`, `window`, `resetsAt`, `limit`, `used`.
+
+Checks **fail open** — errors and reads slower than 250 ms allow the request — so a metering outage can never take down chat. At `quotaWarnThresholdPct` (default 80%), users get a one-time-per-window notification and admins get an audit event; denials are audit-logged once per window instance.
+
+### What Users See
+
+Admin display toggles select tokens / % / $.
+
+- **Working panel** (per turn) — `model · tokens in/out · ~$ · % of allowance`, from the SSE usage frame.
+- **Chat transcript** — a muted per-message caption with the turn's model / tokens / ~$, persisted on the assistant message in the chat log.
+- **History list** — per-conversation Tokens and Est. cost columns (summed server-side in the summaries projection).
+- **Profile page** (Settings → AI Usage) — day / week / cycle totals with progress bars and reset times, via `GET /user/quota`.
+
+### What Admins See
+
+- **Admin → Usage Limits** (`#/admin/usage`) — limits, windows, warning threshold, display toggles, profiles editor, grant form, retention.
+- **Admin → Usage Analytics** (`#/admin/usage-analytics`) — stacked daily usage by model (tokens / $ toggle, range + model filters), by-model breakdown table, top users (with per-user limit drill-in), and a warnings / denials / grants feed from the audit log. The model endpoint editor shows each model's weight, prices, a suggested weight from the price ratio vs the default model, and its tenant-wide consumption.
+
+**Endpoints:** `GET /user/quota` · `POST /admin/quota/grant` · `GET /admin/quota/usage/user` · `GET /admin/quota/usage/models` · `GET /admin/quota/usage/timeseries` · `GET /admin/quota/usage/users` · `GET /admin/quota/events`. All admin routes require the admin role; aggregates carry ~60 s caches.
+
+### Caveats & Design Rules
+
+**Model figures are always raw tokens.** Weight never inflates a model-scoped display — a 1.5-weight model that used 1,000 tokens shows 1,000, never 1,500. Weighted values appear only in labeled budget contexts ("Counts against allowance", % of allowance). Never derive raw by dividing weighted by the current weight: weights are **prospective** (changing one never rewrites history), so raw `byModel` counters are the only trustworthy per-model record.
+
+**Two cost bases that can legitimately disagree.** Usage Analytics re-prices raw tokens at **current** endpoint prices ("what would this cost today"); chat transcript captions and History totals sum per-turn `costEstimate` values **frozen at the prices in effect when each turn ran** ("what it cost as it happened"). Price changes are prospective, like weights. All $ figures are estimates for display — nothing persists dollar amounts.
+
+**Enforcement is deliberately approximate at the edges.** Checks are check-then-act (parallel requests can momentarily over-admit; counters stay accurate via CAS), overshoot is bounded by the strictness level, and `strict`'s mid-stream abort applies to the main chat streaming path — agentic tool loops re-check between iterations, flow LLM nodes are checked per node, and scoped chat bounds at its pre-check. The chat-log usage copy is client-written and **display-only**; enforcement reads only the server-side counters.
+
+**Retention** (`quotaRetentionDays`, 30–730, default 183) is stamped as per-doc TTL **on every usage write**: active users adopt a changed value on their next request; idle users' history keeps the TTL it was last written with; lowering it deletes older history as it takes effect and **cannot resurrect** anything already expired. It also caps the analytics look-back.
+
+**Pick `quotaTimezone` at rollout.** Changing timezone (or week start / anchor day) later re-interprets the boundaries of existing daily buckets — no data is lost, but up to a day of history can shift between windows.
+
+**The allowance % is live-only.** It rides the SSE frame and is never persisted — a stored "38% of daily" would be wrong the moment the window resets.
+
+**Scale envelope.** Checks are 1–2 point reads (~1 RU) per metered call; recording is fire-and-forget CAS off the request path; analytics scan-and-sum is comfortable for hundreds of active users per month. A rollup job can slot behind the same endpoints later without UI changes.

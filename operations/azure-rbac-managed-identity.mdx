@@ -1,0 +1,143 @@
+---
+title: "Azure RBAC & Managed Identity Reference"
+description: "Every Azure role assignment Findable can require, organized by the identity that needs it — App Service identity, Search service identity, and data-platform connections."
+---
+
+<Note>
+Not to be confused with [Role-Based UI Access Control](/access-identity/role-based-access), which covers Findable's *internal* application roles. This page is the master reference for **Azure resource permissions**.
+</Note>
+
+### Overview — Every Place RBAC Can Be Used
+
+Every Azure integration in Findable that can (or must) authenticate with RBAC instead of an API key or connection string. **Required** rows need the role assignment whenever the feature is in use, no matter how the rest of the deployment authenticates — Azure offers no API-key alternative for those calls. **Opt-in** rows only need it when the admin switches that component's auth type to Managed System Identity.
+
+| Azure service | What Findable does there | Calling identity | RBAC is… | When it's needed |
+|------|-------|------|------|------|
+| Azure AI Search (elevated read) | Purge-job cleanup of the shared OneDrive index; fallback for status / delete / sync when no delegated user token is available | App Service | **Required** | Whenever **OneDrive is the workspace file location or Document-Level ACL is enabled** — even on API-key deployments. `x-ms-enable-elevated-read` is only honored for an RBAC bearer caller. Not needed for Blob-backend-only deployments without ACLs. |
+| Azure Monitor (Logs Ingestion) | Ships application logs to a Log Analytics workspace via the DCR | App Service | **Required** | Whenever **Azure Monitor logging is enabled** — the Logs Ingestion API has no key auth. |
+| Azure AI Search (queries + index / indexer / datasource management) | All other search traffic | App Service | Opt-in | Search endpoint auth type = Managed System Identity. |
+| Azure OpenAI / AI Foundry | Chat, embeddings, image generation, endpoint tests | App Service | Opt-in | Model / embedding endpoint auth type = `managedSystemIdentity` (set per endpoint on **Admin → AI Model Endpoints**). |
+| Document Intelligence | OneDrive text extraction (`prebuilt-read`) | App Service | Opt-in | Document Intelligence auth type = Managed System Identity (on the AI Search Endpoint settings). |
+| Blob Storage | File uploads / downloads, container management | App Service | Opt-in | Blob storage auth type = Managed System Identity. |
+| Cosmos DB | All application data + setup-wizard container creation | App Service | Opt-in | `AZURE_COSMOS_AUTH_TYPE=managedSystemIdentity`. |
+| Microsoft Graph | User / group lookups for auth & entitlements | App Service | Opt-in | `GRAPH_AUTH_TYPE=managedSystemIdentity` (Graph **app roles** on the identity's service principal, not ARM roles). |
+| Azure Communication Services | Email notifications | App Service | Opt-in | ACS endpoint configured without a connection string. |
+| Blob Storage (indexer data source) | Search indexer reads blobs to index them | **Search service** | Opt-in | Blob auth type = Managed System Identity + `azureBlobResourceId` set on the data source. |
+| Azure OpenAI / AI Foundry (integrated vectorization) | Index vectorizer (query time) + embedding skill (indexing time) | **Search service** | Opt-in | Embedding model auth type = Managed System Identity — selecting MSI strips the apiKey from the vectorizer, so the *search service's* identity makes the calls. |
+| Azure AI multi-service | Built-in skills (OCR, language detection) | **Search service** | Opt-in | Multi-services auth type = Managed System Identity. |
+| Azure SQL / ADX / Cosmos (Data Platform tools) | Natural-language SQL tool queries | Data connection | Opt-in | Connection authentication = `managed-identity` (in-database permissions, not ARM roles). |
+
+### Live Monitoring
+
+The **Admin → Health** page (`#/admin/about`) has an **Identity & RBAC (Azure)** section with probes for the App Service identity's grants — elevated read, search management under MSI, model endpoints on MSI — plus a **Search API Access control** fingerprint that catches the portal left on "API keys" only while Findable authenticates with managed identity. That mismatch produces 403s otherwise indistinguishable from a missing role.
+
+The **Search service identity** rows cannot be tested from the app (the app can't authenticate as the search service), so the health page lists them as informational entries; their failures surface in indexer execution history and vectorizer errors.
+
+**Local development:** RBAC checks will be blank or failing when the server runs locally — managed identity only exists on Azure. `DefaultAzureCredential` falls back to the Azure CLI (`az login`) identity, so checks only pass locally if that account holds the same roles. Always verify RBAC on an Azure deployment.
+
+### Three Kinds of Principals
+
+- **App Service system-assigned managed identity** — the server's own identity. Deployment **slots have their own identities**; every assignment below must be repeated per slot that runs Findable.
+- **Azure AI Search service's system-assigned managed identity** — used when the *search service itself* calls out (blob data sources, integrated vectorization, skillsets). Enable it under the search service → Identity.
+- **The developer's Entra ID user** for local development — `DefaultAzureCredential` picks up the Azure CLI (`az login`) identity; assign it the same roles as the App Service identity for the features being developed.
+
+### Migration Policy — Go All-In Per Component
+
+Each component (search, model endpoints, Document Intelligence, storage, Cosmos, Graph) switches to managed identity independently, but when one is flipped, finish the job rather than leaving unused API keys enabled:
+
+**grant the role(s) → switch the component's auth type in Findable → verify → disable the resource's local auth (API keys)**
+
+For Azure AI Search specifically, keep API Access control on **Both** during the transition and only set **Role-based access control** (only) after the Findable endpoint is on Managed System Identity and verified — RBAC-only instantly 403s every API-key request.
+
+### App Service Managed Identity
+
+| Target resource | Role | Required when | Notes |
+|------|-------|--------------|-------|
+| Azure AI Search service | **Search Index Data Contributor** | OneDrive is the personal-files search backend, or document-level ACLs are enabled — required even on API-key deployments (elevated read is RBAC-only) | Not needed for Blob-backend-only deployments without ACLs. Includes the `contentSecurity/elevatedOperations/read` data action. |
+| Azure AI Search service | **Search Service Contributor** | Search endpoint auth type = Managed System Identity | Index / indexer / datasource management. Not needed on API-key search endpoints. |
+| Azure OpenAI / AI Foundry resource | **Cognitive Services OpenAI User** | Any model or embedding endpoint on the resource has auth type `managedSystemIdentity` | Covers chat, embeddings, images, and endpoint tests (all use the same `cognitiveservices.azure.com` token scope; Claude-on-Foundry uses the `ai.azure.com` audience but the same assignment). Assign on **each** resource the identity calls — embedding and chat resources may differ. |
+| Document Intelligence resource | **Cognitive Services User** | Document Intelligence auth type = Managed System Identity | OneDrive text extraction (`prebuilt-read`) and connectivity health. |
+| Storage account | **Storage Blob Data Contributor** | Blob storage auth type = Managed System Identity | Server creates containers and uploads / downloads / deletes blobs — Reader is not enough. |
+| Cosmos DB account | **Cosmos DB Built-in Data Contributor** (data plane) + **Cosmos DB Operator** (ARM) | `AZURE_COSMOS_AUTH_TYPE=managedSystemIdentity` | Data-plane role is assigned with `az cosmosdb sql role assignment create`, not `az role assignment create`. Operator is needed for setup-wizard container creation. See below. |
+| Microsoft Graph | **Graph application permissions** (not an ARM role): `User.ReadBasic.All` + `GroupMember.Read.All` | `GRAPH_AUTH_TYPE=managedSystemIdentity` | App roles must be granted to the managed identity's service principal (script / Graph API — the portal can't do this) with admin consent. |
+| Azure Communication Services resource | No built-in email-send role — custom role with `Microsoft.Communication/CommunicationServices/*` read + write (or **Contributor**) | ACS endpoint configured without a connection string | Email notifications. |
+| Data Collection Rule | **Monitoring Metrics Publisher** | Azure Monitor logging enabled | **Always** RBAC — the Logs Ingestion API has no key auth. |
+
+### Azure AI Search Service's Managed Identity
+
+| Target resource | Role | Required when | Notes |
+|------|-------|--------------|-------|
+| Storage account | **Storage Blob Data Reader** | Blob auth type = Managed System Identity and a blob data source is created (`azureBlobResourceId`) | The search *indexer* reads blobs as the search service. |
+| Azure OpenAI / AI Foundry resource | **Cognitive Services OpenAI User** | Embedding model auth type = Managed System Identity | Integrated vectorization: the index vectorizer (query time) and embedding skill (indexing time) call the embedding resource as the search service. |
+| Azure AI multi-service resource | **Cognitive Services User** | Multi-services auth type = Managed System Identity | Built-in skills (OCR, language detection) at indexing time. |
+
+### Data Platform Tool Connections (Non-ARM Permissions)
+
+Tool data connections configured with `managed-identity` authentication use in-database permission models, not Azure role assignments:
+
+| Connection type | Permission required |
+|------|-------|
+| Azure SQL / SQL Server | Contained Entra ID database user for the identity + `db_datareader` (or a custom database role) |
+| Azure Data Explorer (Kusto) | `Database Viewer` on the target database |
+| Cosmos DB (tool) | **Cosmos DB Built-in Data Reader** (or Data Contributor) on the account |
+
+### Assigning Roles
+
+```bash
+az role assignment create \
+  --assignee "<principal-id-of-the-identity>" \
+  --role "<role name from the tables above>" \
+  --scope "/subscriptions/<sub>/resourceGroups/<rg>/providers/<provider>/<resource>"
+```
+
+Find the principal IDs under App Service → Identity (per slot), or search service → Identity. Role assignments can take a few minutes to propagate; a still-403ing call right after assignment usually just needs a retry. The app caches tokens, so a restart may be needed to pick up new role claims.
+
+### Cosmos DB RBAC (Managed Identity Only)
+
+These assignments are only required when using managed-identity authentication for Cosmos DB. They are not required when connecting with an API key or connection string. Assign both the data-plane and management-plane roles directly on the Cosmos DB account.
+
+<CodeGroup>
+
+```bash Azure CLI
+az cosmosdb sql role assignment create \
+  --account-name "<cosmos-account>" \
+  --resource-group "<resource-group>" \
+  --subscription "<subscription-id>" \
+  --role-definition-id 00000000-0000-0000-0000-000000000002 \
+  --principal-id "<managed-identity-principal-id>" \
+  --scope "/"
+
+az role assignment create \
+  --assignee "<managed-identity-principal-id>" \
+  --role "Cosmos DB Operator" \
+  --scope "/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.DocumentDB/databaseAccounts/<cosmos-account>"
+```
+
+```powershell Azure PowerShell
+$subscriptionId = "<subscription-id>"
+$resourceGroup = "<resource-group>"
+$accountName = "<cosmos-account>"
+$principalId = "<managed-identity-principal-id>"
+Set-AzContext -SubscriptionId $subscriptionId
+
+New-AzCosmosDBSqlRoleAssignment `
+  -AccountName $accountName `
+  -ResourceGroupName $resourceGroup `
+  -RoleDefinitionId "00000000-0000-0000-0000-000000000002" `
+  -PrincipalId $principalId `
+  -Scope "/"
+
+$accountScope = "/subscriptions/$subscriptionId/resourceGroups/$resourceGroup/providers/Microsoft.DocumentDB/databaseAccounts/$accountName"
+New-AzRoleAssignment `
+  -ObjectId $principalId `
+  -RoleDefinitionName "Cosmos DB Operator" `
+  -Scope $accountScope
+```
+
+</CodeGroup>
+
+The first command grants **Cosmos DB Built-in Data Contributor** for data access. The second grants **Cosmos DB Operator** for account resource operations such as creating the containers required by the setup wizard.
+
+Deployment slots have separate system-assigned identities — repeat both assignments with each running slot's principal ID (App Service → Deployment slots → the slot → Identity).
+
+The application connects using `AZURE_COSMOS_ENDPOINT` and `DefaultAzureCredential`; do not configure `AZURE_COSMOS_KEY` when using managed identity. For on-the-fly container creation, set `AZURE_COSMOS_RESOURCE_ID` to the Cosmos account scope shown above when the account is not in the App Service subscription and resource group. Same-scope App Service deployments infer the subscription and resource group from platform environment variables.

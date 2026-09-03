@@ -49,7 +49,8 @@
               "data-sources/data-connections",
               "data-sources/vector-store",
               "data-sources/sharepoint",
-              "data-sources/onedrive"
+              "data-sources/onedrive",
+              "data-sources/storage-location-matrix"
             ]
           },
           {
@@ -91,8 +92,10 @@
             "group": "Operations & Deployment",
             "pages": [
               "operations/production-deployment",
+              "operations/azure-rbac-managed-identity",
               "operations/ci-cd",
               "operations/capacity-limits",
+              "operations/ai-quotas-usage",
               "operations/notifications",
               "operations/scheduled-jobs",
               "operations/azure-monitor-logging",

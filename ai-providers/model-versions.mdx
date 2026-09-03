@@ -1,23 +1,40 @@
 ---
-title: "Model API Versions"
-description: "Azure AI Model Inference API versions, deployment endpoint differences, and embedding endpoints."
+title: "Azure AI Foundry & Model API Versions"
+description: "One provider covers Azure OpenAI and Azure AI Foundry resources on the v1 API surface — deployment names in the request body, no dated version strings, and embeddings on the same route."
 ---
 
-### Azure AI Model Inference API
+### Azure AI Foundry / Azure OpenAI (v1 API)
 
-Azure AI uses the **Azure AI Model Inference API** exclusively. Legacy Azure OpenAI deployment endpoints (`/openai/deployments/{name}?api-version=XXX`) are no longer supported.
+The `AzureAI` provider (displayed as **Azure AI Foundry**) targets the OpenAI-compatible **v1 surface**, which is served identically by classic Azure OpenAI resources (`kind: OpenAI`) and Azure AI Foundry resources (`kind: AIServices`) — on any of their hostnames:
+
+- `*.openai.azure.com`
+- `*.services.ai.azure.com`
+- `*.cognitiveservices.azure.com`
+
+One provider covers both resource kinds, including non-OpenAI **Foundry Models** deployments (DeepSeek, Llama, Grok, …) and **model-router**. Enter the deployment name like any other model.
+
+<Note>
+There is no Azure OpenAI service end-of-life. Microsoft's in-place resource upgrade from Azure OpenAI to Azure AI Foundry is transparent to Findable — the v1 surface and your deployment names are unchanged.
+</Note>
 
 | API Version | Endpoint Format | Usage |
 |-------------|----------------|-------|
-| **v1** (default) | `{endpoint}/openai/v1` | Stable — model specified in the request body |
+| **v1** *(default)* | `{endpoint}/openai/v1` | Stable, evergreen — model specified in the request body |
 | **preview** | `{endpoint}/openai/v1?api-version=preview` | Preview features — model specified in the request body |
+| dated *(legacy)* | `{endpoint}/openai/deployments/{name}?api-version=…` | Embeddings / images only, for endpoints saved with a dated version |
 
-Key differences from the legacy Azure OpenAI format:
-- **Model in body** — The model/deployment name is sent in the request body (`model` field), not in the URL path
-- **No deployment URLs** — No `/openai/deployments/{name}` paths
-- **No dated versions** — No `2024-10-21` or `2025-04-01-preview` style version strings
-- **Authentication** — Uses `api-key` header (API key) or `Authorization: Bearer` (Managed Identity), same as before
+Key properties of the v1 surface:
+
+- **Model in body** — the deployment name is sent in the request body (`model` field), not in the URL path
+- **No dated versions** — no `2024-10-21` or `2025-04-01-preview` style version strings needed
+- **Authentication** — `api-key` header (API key) or `Authorization: Bearer` Entra token (Managed Identity)
 
 ### Embeddings
 
-Text embedding models use `AzureOpenAIEmbeddings` from `@langchain/openai`, which still requires a dated API version (e.g., `2024-06-01`) for the Azure OpenAI Embeddings API. This is configured per embedding endpoint in **Admin → AI Search Endpoints** ([`#/admin/search`]).
+Text embedding endpoints use the same v1 surface by default (`{endpoint}/openai/v1/embeddings`, deployment name as `model`). Endpoints saved with a dated API version (e.g. `2024-06-01`) keep the legacy `AzureOpenAIEmbeddings` deployments route — both work on either resource kind.
+
+Configured per embedding endpoint in **Admin → AI Model Endpoints**, or via the legacy inline fields in **Admin → AI Search Endpoints** (`#/admin/search`).
+
+### Retired Models
+
+The GPT-3.5 and GPT-4-family entries that were kept in the hardcoded token-limit table for enterprise compatibility have been removed, along with the `32k` / `16k` suffix ladder used to infer their context windows. A still-deployed retired model now falls back to **live token-limit probing** instead of a hardcoded limit; unknown hosted models on that path get a flat 128k fallback, since every current-generation model there has at least a 128k context window. The bootstrap catalog needed no changes — every seed entry is already current-generation.

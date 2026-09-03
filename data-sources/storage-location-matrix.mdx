@@ -1,0 +1,46 @@
+---
+title: "Storage Location Matrix"
+description: "Where every file lands under default settings — derived from code and pinned by a test, one row per combination of scope, lifecycle, user type, and backend."
+---
+
+This matrix is derived from code, not prose, and pinned by `src/files/__tests__/storageLocationMatrix.test.ts` — one test per row. A failing row means the layout changed and the matrix must be reconciled deliberately.
+
+Since 3.2.51, **all** upload / list / download / delete routing goes through `src/files/fileSourceResolver.ts` and `src/files/filesApiRouter.ts`: the server expands a `{chatId, sourceId}` reference into these locations. The client never assembles a path.
+
+### The Matrix (Defaults)
+
+| # | Name | Scope | Entity Lifecycle | Native / External User | OneDrive Enabled | Storage | Full path (defaults) |
+|---|------|-------|------------------|------------------------|------------------|---------|----------------------|
+| 1 | Workspace | Personal | Ephemeral | Native | Yes | OneDrive | `OneDrive/AIAssistant/AttachedFiles/{chatId}/{file}` (Graph: `/me/drive/root:/AIAssistant/AttachedFiles/{chatId}`) |
+| 2 | Workspace | Personal | Ephemeral | Native | No | AzureFiles | `data/Personal/{upn}/AttachedFiles/{chatId}/{file}` |
+| 3 | Workspace | Personal | Ephemeral | External | – | AzureFiles | `data/Personal/{upn}/AttachedFiles/{chatId}/{file}` |
+| 4 | Personal | Personal | Permanent | Native | Yes | OneDrive | `OneDrive/AIAssistant/AttachedFiles/{chatId}/{file}` |
+| 5 | Personal | Personal | Permanent | Native | No | AzureFiles | `data/Personal/{upn}/AttachedFiles/{chatId}/{file}` |
+| 6 | Personal | Personal | Permanent | External | – | AzureFiles | `data/Personal/{upn}/AttachedFiles/{chatId}/{file}` |
+| 7 | My Attached Files | Shared | Permanent | Native | Yes | OneDrive | `OneDrive/AIAssistant/AttachedFiles/{chatId}/{file}` |
+| 8 | My Attached Files | Shared | Permanent | Native | No | AzureFiles | `data/Personal/{upn}/AttachedFiles/{chatId}/{file}` |
+| 9 | My Attached Files | Shared | Permanent | External | – | AzureFiles | `data/Personal/{upn}/AttachedFiles/{chatId}/{file}` |
+| 10 | Shared Files | Shared | Permanent | — | – | AzureFiles | `data/Shared/{folderName}/{file}` — `{folderName}` = **the chat id** for chats created on 3.2.51+; sanitized chat title for older chats (honored verbatim, never migrated) |
+
+### Where the Defaults Come From
+
+- `shared/src/utils/constants.ts` — `DEFAULT_AZURE_BLOB_CONTAINER='data'`, `DEFAULT_AZURE_BLOB_PERSONAL_FOLDER='Personal'`, `DEFAULT_AZURE_BLOB_SHARED_FOLDER='Shared'`, `ONEDRIVE_DEFAULT_FOLDER='AIAssistant'`, `ONEDRIVE_ATTACHED_FILES_FOLDER='AttachedFiles'`, `ONEDRIVE_WORKSPACE_FOLDER='Workspace'`
+- `shared/src/domain/files/canonicalPaths.ts` — the single build site for every derived path
+- `shared/src/domain/ai/chatTypes.ts` — `DEFAULT_PERSONAL_SCOPE_MODE = MY_CHAT_FILES`
+- `src/bootstrap/data/builtInDatasources.json` — built-in "My Attached Files" (workspace **and** personal) ship `fileStorageMode: "perChat"`
+- `src/settings/defaults.ts` — `workspaceFileLocation` defaults to `AzureFiles`
+- `src/settings/settingsservice.ts` — `resolveEffectiveWorkspaceFileLocation()` forces external users to AzureFiles
+
+### Notes
+
+1. **Rows 1–9 collapse to two paths.** Under defaults the Name / Scope / Entity-Lifecycle columns do **not** change the path. Only two things do: the effective backend, and the `{chatId}` that partitions the folder. Lifecycle shows up in *retention*, not in *location* — rows 7–9 live on permanent shared chats, but the per-user files themselves are subject to the personal retention / purge policy.
+2. **`{upn}`** is sanitized on write — `@ . #` replaced by `-` (`generatePersonalRelativePath`). `john.doe@contoso.com` → `john-doe-contoso-com`.
+3. **`{chatId}`** — for rows 1–3 it is the per-browser-session ephemeral workspace id (new on refresh / clear); for 4–9 it is the persisted chat id.
+4. **External users can never reach OneDrive** — `resolveEffectiveWorkspaceFileLocation()` short-circuits on `user.externalUser` before reading `workspaceFileLocation`, so rows 3, 6, 9 are AzureFiles regardless of the tenant setting (invariant I2, asserted in the file source resolver).
+5. **Rows 4 and 5 differ only by the OneDrive setting.** `isPersonalFileType()` covers `PERSONAL` *and* `WORKSPACE`, so a `personal`-type source honours `workspaceFileLocation` exactly like the workspace one.
+6. **Non-default `fileStorageMode: sharedCorpus`** swaps `AttachedFiles/{chatId}` for `Workspace` in every personal-store row: `…/Personal/{upn}/Workspace/` or `OneDrive/AIAssistant/Workspace/`. Same substitution when there is no `{chatId}` — `resolveEffectivePersonalScope()` collapses `myChatFiles` → `allPersonal`.
+7. **Generated files** are a *sibling*, never nested under the attachment folder (chat-scoped retrieval filters match on the `AttachedFiles/{chatId}` prefix): `…/Personal/{upn}/GeneratedFiles/{chatId}/` or `OneDrive/AIAssistant/GeneratedFiles/{chatId}/`.
+8. **Blob paths are shown container-relative** — `data` is the default container (`azureBlobStorageContainerName`); the account endpoint comes from `azureBlobEndpoint` or the connection string.
+9. **Blob prefixes are case-sensitive.** `Personal`, `Shared`, `Workspace`, `AttachedFiles` are written with exactly this casing by the canonical path builders; lowercasing happens only in *datasource naming* (`generateDataSourceName`), never in the blob path.
+10. **Shared is always Azure Blob** (invariant I1) — row 10 ignores `workspaceFileLocation` entirely. There is no OneDrive-shared cell by design; SharePoint is the Microsoft-side shared story.
+11. **Shared folders are server-assigned.** On save, a SHARED source without a folder gets `Shared/{chatId}` + the derived index name (`chatservice` `normalizeSharedFileSources`); the resolver applies the same default at read time. Chat ids are unique, so two same-titled chats can never collide into one folder / index, and a **copied chat never shares the original's corpus** — its SHARED sources are re-assigned `Shared/{newChatId}` and files are deliberately not cloned.

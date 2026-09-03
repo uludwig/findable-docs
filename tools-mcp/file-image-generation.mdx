@@ -39,11 +39,11 @@ When the request is genuinely ambiguous (structured diagram vs. generated raster
 
 ### Admin Setup — Image Generation
 
-1. Run bootstrap (or add manually) to seed the **Image Generation** model endpoint catalog entries: `gpt-image-1` (Azure AI and OpenAI), `grok-2-image` (xAI), and `gemini-3.1-flash-image` (Google).
+1. Run bootstrap (or add manually) to seed the **Image Generation** model endpoint catalog entries: `gpt-image-2` (Azure AI Foundry and OpenAI), `grok-imagine-image-pro` (xAI), and `gemini-3-pro-image-preview` (Google).
 2. Enable/configure the endpoint you want on the **Models** admin page (endpoint type must be **Image Generation**).
 3. On **Admin → AI Settings**, select the **Image Generation Model**. Unset falls back to the first enabled image endpoint; with no image endpoint at all the `generate_image` tool is not bound.
 
-Provider notes: DALL·E 3 was retired in March 2026 and is not supported on Azure/OpenAI (use `gpt-image-1`); Google's Imagen predict API is deprecated — Gemini-native image models are used instead.
+Provider notes: DALL·E 3 was retired in March 2026 and `gpt-image-1` retires October 2026 — neither is supported (use `gpt-image-2`); Google's Imagen predict API is deprecated — Gemini-native image models are used instead.
 
 ### Admin Setup — Default Chat Model
 
